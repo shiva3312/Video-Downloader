@@ -1,0 +1,429 @@
+:host {
+  all: initial;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-size: 12px;
+  line-height: 1.35;
+  -webkit-font-smoothing: antialiased;
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  z-index: 2147483647;
+  pointer-events: auto;
+  user-select: none;
+}
+
+/* Floating Action Button (Collapsed View) */
+.vd-fab {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  background: rgba(15, 23, 42, 0.94);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  color: #ffffff;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 9999px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(0, 136, 204, 0.3);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 500;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.vd-fab:hover {
+  background: rgba(30, 41, 59, 0.98);
+  border-color: rgba(0, 136, 204, 0.6);
+  transform: translateY(-2px) scale(1.02);
+  box-shadow: 0 10px 32px rgba(0, 136, 204, 0.4);
+}
+
+.vd-fab-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: #0088cc;
+  color: #ffffff;
+  font-size: 10px;
+  font-weight: 700;
+  min-width: 18px;
+  height: 18px;
+  border-radius: 9px;
+  padding: 0 5px;
+}
+
+/* Expanded Card Panel */
+.vd-panel {
+  width: 330px;
+  max-height: 400px;
+  background: rgba(15, 23, 42, 0.96);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 14px;
+  box-shadow: 0 16px 45px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.08);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: vd-slide-up 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes vd-slide-up {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.vd-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  background: rgba(30, 41, 59, 0.7);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.vd-panel-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.vd-panel-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #ffffff;
+}
+
+.vd-panel-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.vd-icon-btn {
+  background: transparent;
+  border: none;
+  color: #94a3b8;
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 5px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+}
+
+.vd-icon-btn:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: #ffffff;
+}
+
+.vd-items-list {
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  overflow-y: auto;
+  max-height: 330px;
+}
+
+.vd-items-list::-webkit-scrollbar {
+  width: 4px;
+}
+.vd-items-list::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+}
+
+/* Compact Item Row */
+.vd-task-item {
+  background: rgba(30, 41, 59, 0.65);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  padding: 7px 9px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  transition: border-color 0.15s ease;
+}
+
+.vd-task-item:hover {
+  border-color: rgba(0, 136, 204, 0.4);
+}
+
+.vd-task-top-compact {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Thumbnail Preview */
+.vd-thumb-wrap {
+  width: 46px;
+  height: 28px;
+  border-radius: 4px;
+  overflow: hidden;
+  background: #0f172a;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.vd-thumb-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.vd-thumb-placeholder {
+  color: #64748b;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Item Main Info */
+.vd-task-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.vd-task-title-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.vd-title-container {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.vd-title-container:hover .vd-rename-trigger {
+  opacity: 1;
+}
+
+.vd-rename-trigger {
+  background: transparent;
+  border: none;
+  color: #64748b;
+  cursor: pointer;
+  padding: 1px 3px;
+  border-radius: 3px;
+  opacity: 0.4;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+}
+
+.vd-rename-trigger:hover {
+  opacity: 1;
+  color: #38bdf8;
+  background: rgba(0, 136, 204, 0.2);
+}
+
+.vd-rename-wrap {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  width: 100%;
+}
+
+.vd-rename-input {
+  flex: 1;
+  background: rgba(15, 23, 42, 0.95);
+  border: 1px solid #0088cc;
+  color: #ffffff;
+  font-size: 11px;
+  padding: 2px 5px;
+  border-radius: 4px;
+  outline: none;
+  font-family: inherit;
+}
+
+.vd-rename-btn {
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: #cbd5e1;
+  cursor: pointer;
+  font-size: 10px;
+  padding: 2px 5px;
+  border-radius: 3px;
+  line-height: 1;
+}
+
+.vd-rename-btn.save:hover {
+  background: #10b981;
+  color: #ffffff;
+  border-color: #10b981;
+}
+
+.vd-rename-btn.cancel:hover {
+  background: #ef4444;
+  color: #ffffff;
+  border-color: #ef4444;
+}
+
+.vd-task-name {
+  font-size: 11px;
+  font-weight: 500;
+  color: #f1f5f9;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+}
+
+.vd-badges-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.vd-format-badge {
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 4px;
+  background: rgba(0, 136, 204, 0.25);
+  color: #38bdf8;
+  border: 1px solid rgba(0, 136, 204, 0.45);
+  border-radius: 3px;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+}
+
+.vd-res-badge {
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 4px;
+  background: rgba(148, 163, 184, 0.18);
+  color: #cbd5e1;
+  border-radius: 3px;
+  text-transform: uppercase;
+}
+
+.vd-status-pill {
+  font-size: 9px;
+  font-weight: 600;
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+
+.vd-status-pill.paused {
+  background: rgba(245, 158, 11, 0.2);
+  color: #fbbf24;
+}
+
+.vd-status-pill.completed {
+  background: rgba(16, 185, 129, 0.2);
+  color: #34d399;
+}
+
+.vd-status-pill.error {
+  background: rgba(239, 68, 68, 0.2);
+  color: #f87171;
+}
+
+/* Action Buttons */
+.vd-task-actions {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  flex-shrink: 0;
+}
+
+.vd-action-btn {
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.06);
+  color: #cbd5e1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+  transition: all 0.15s ease;
+}
+
+.vd-action-btn:hover {
+  background: rgba(255, 255, 255, 0.18);
+  color: #ffffff;
+  border-color: rgba(255, 255, 255, 0.3);
+}
+
+.vd-action-btn.pause-btn:hover {
+  border-color: #f59e0b;
+  color: #fbbf24;
+}
+
+.vd-action-btn.download-btn:hover {
+  border-color: #0088cc;
+  color: #38bdf8;
+}
+
+.vd-action-btn.delete-btn:hover {
+  border-color: #ef4444;
+  color: #f87171;
+}
+
+/* Compact Progress Bar */
+.vd-task-progress-wrap {
+  width: 100%;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 9999px;
+  overflow: hidden;
+}
+
+.vd-task-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #0088cc, #00e5ff);
+  border-radius: 9999px;
+  transition: width 0.15s ease-out;
+}
+
+.vd-task-bottom {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 10px;
+  color: #94a3b8;
+}
+
+.vd-speed-stat {
+  color: #38bdf8;
+  font-weight: 500;
+}
+
+.vd-reconnecting-stat {
+  color: #f59e0b;
+  font-weight: 500;
+  animation: vd-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes vd-pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}

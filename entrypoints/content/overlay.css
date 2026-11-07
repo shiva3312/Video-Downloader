@@ -1,0 +1,126 @@
+:host {
+  all: initial;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-size: 13px;
+  line-height: 1.4;
+  -webkit-font-smoothing: antialiased;
+  z-index: 2147483647;
+  pointer-events: auto;
+}
+
+.vd-overlay-container {
+  display: inline-flex;
+  align-items: center;
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 2147483647;
+  pointer-events: auto;
+  user-select: none;
+  opacity: 0.85;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.vd-overlay-container:hover {
+  opacity: 1;
+}
+
+.vd-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 12px;
+  background: rgba(15, 23, 42, 0.88);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  color: #ffffff;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 9999px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(0, 0, 0, 0.2);
+  cursor: pointer;
+  font-weight: 500;
+  letter-spacing: 0.2px;
+  outline: none;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.vd-button:hover {
+  background: rgba(30, 41, 59, 0.96);
+  border-color: rgba(255, 255, 255, 0.35);
+  box-shadow: 0 6px 24px rgba(0, 136, 204, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.25);
+  transform: translateY(-1px) scale(1.02);
+}
+
+.vd-button:active {
+  transform: translateY(0) scale(0.98);
+}
+
+.vd-badge-format {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 5px;
+  background: rgba(0, 136, 204, 0.25);
+  color: #38bdf8;
+  border: 1px solid rgba(0, 136, 204, 0.45);
+  border-radius: 4px;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+}
+
+.vd-badge-resolution {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 5px;
+  background: linear-gradient(135deg, #0088cc, #00b4d8);
+  color: #ffffff;
+  border-radius: 4px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+
+.vd-badge-size {
+  font-size: 11px;
+  color: #94a3b8;
+  font-weight: 400;
+}
+
+.vd-icon-spin {
+  animation: vd-spin 1s linear infinite;
+}
+
+@keyframes vd-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.vd-progress-bar-wrap {
+  width: 60px;
+  height: 5px;
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 9999px;
+  overflow: hidden;
+  position: relative;
+}
+
+.vd-progress-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #0088cc, #00e5ff);
+  border-radius: 9999px;
+  transition: width 0.15s ease-out;
+}
+
+.vd-status-success {
+  background: rgba(16, 185, 129, 0.92) !important;
+  border-color: rgba(255, 255, 255, 0.3) !important;
+  color: #ffffff !important;
+}
+
+.vd-status-error {
+  background: rgba(239, 68, 68, 0.92) !important;
+  border-color: rgba(255, 255, 255, 0.3) !important;
+  color: #ffffff !important;
+}

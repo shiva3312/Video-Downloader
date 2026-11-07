@@ -157,13 +157,21 @@ export function downloadVideoWithProgress(
   onProgress?: (progress: DownloadProgress) => void
 ): Promise<void> {
   return new Promise((resolve, reject) => {
-    let responded = false;
-
     const messageHandler = (event: MessageEvent) => {
+      // Listen for isolated world CANCEL
+      if (
+        event.data?.source === 'VD_ISOLATED' &&
+        event.data?.type === 'CANCEL_DOWNLOAD' &&
+        event.data?.url === url
+      ) {
+        window.removeEventListener('message', messageHandler);
+        reject(new Error('Download cancelled'));
+        return;
+      }
+
       if (event.data?.source !== 'VD_MAIN' || event.data?.url !== url) return;
 
       if (event.data.type === 'PROGRESS') {
-        responded = true;
         if (onProgress) {
           onProgress({
             percent: event.data.percent,
@@ -194,77 +202,5 @@ export function downloadVideoWithProgress(
       },
       '*'
     );
-
-    setTimeout(() => {
-      if (!responded) {
-        console.warn('[VideoDownloader] Main-world bridge did not respond. Trying direct fetch fallback...');
-        window.removeEventListener('message', messageHandler);
-        directFetchFallback(url, filename, onProgress).then(resolve).catch(reject);
-      }
-    }, 3000);
   });
-}
-
-async function directFetchFallback(
-  url: string,
-  filename: string,
-  onProgress?: (progress: DownloadProgress) => void
-): Promise<void> {
-  const response = await fetch(url, {
-    credentials: 'include',
-    mode: 'cors',
-  });
-
-  if (!response.ok && response.status !== 206) {
-    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-  }
-
-  const contentLength = response.headers.get('content-length');
-  const totalBytes = contentLength ? parseInt(contentLength, 10) : null;
-  const contentType = response.headers.get('content-type') || 'video/mp4';
-
-  if (!response.body) {
-    const blob = await response.blob();
-    triggerAnchorSave(blob, filename);
-    return;
-  }
-
-  const reader = response.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let loadedBytes = 0;
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-
-    if (value) {
-      chunks.push(value);
-      loadedBytes += value.length;
-
-      if (onProgress) {
-        const percent = totalBytes && totalBytes > 0
-          ? Math.min(100, Math.round((loadedBytes / totalBytes) * 100))
-          : 0;
-        onProgress({ percent, loadedBytes, totalBytes });
-      }
-    }
-  }
-
-  const completeBlob = new Blob(chunks, { type: contentType });
-  triggerAnchorSave(completeBlob, filename);
-}
-
-function triggerAnchorSave(blob: Blob, filename: string) {
-  let safeName = filename;
-  const blobUrl = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.style.display = 'none';
-  a.href = blobUrl;
-  a.download = safeName;
-  document.body.appendChild(a);
-  a.click();
-  setTimeout(() => {
-    a.remove();
-    URL.revokeObjectURL(blobUrl);
-  }, 10000);
 }

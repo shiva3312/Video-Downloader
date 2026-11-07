@@ -3,6 +3,7 @@ import { defineContentScript } from 'wxt/sandbox';
 interface DownloadController {
   paused: boolean;
   cancelled: boolean;
+  abortController?: AbortController;
   resumeResolve?: () => void;
 }
 
@@ -42,6 +43,9 @@ export default defineContentScript({
         if (session) {
           session.controller.paused = true;
           session.currentSpeed = 0;
+          if (session.controller.abortController) {
+            session.controller.abortController.abort();
+          }
           console.log('[VideoDownloader:MainWorld] Paused download at offset:', session.offset);
         }
         return;
@@ -63,16 +67,23 @@ export default defineContentScript({
         return;
       }
 
-      // Handle Cancel / Delete
+      // Handle Cancel / Delete (immediately purge in-memory chunks, abort network, NEVER save partial data)
       if (type === 'CANCEL_DOWNLOAD') {
         const session = downloadSessions.get(url);
         if (session) {
           session.controller.cancelled = true;
+          if (session.controller.abortController) {
+            session.controller.abortController.abort();
+          }
           if (session.controller.resumeResolve) {
             session.controller.resumeResolve();
+            session.controller.resumeResolve = undefined;
           }
+          // Immediately purge all buffered bytes from memory
+          session.chunks = [];
+          session.offset = 0;
           downloadSessions.delete(url);
-          console.log('[VideoDownloader:MainWorld] Cancelled and removed session for:', url);
+          console.log('[VideoDownloader:MainWorld] Cancelled download and purged all partial data for:', url);
         }
         return;
       }
@@ -155,8 +166,9 @@ export default defineContentScript({
     });
 
     /**
-     * High-speed, resumable chunk & continuous stream consumer.
+     * High-speed, resumable continuous stream consumer.
      * Uses direct zero-copy ArrayBuffers and stream pipelining for maximum download speed.
+     * Strictly cancels without saving any partial data if user cancels.
      */
     async function executeResumableDownload(
       url: string,
@@ -196,6 +208,11 @@ export default defineContentScript({
         try {
           const res = await window.fetch(url);
           const blob = await res.blob();
+          if (controller.cancelled) {
+            session.chunks = [];
+            sessions.delete(url);
+            return;
+          }
           saveBlobToDisk(blob, filename);
           window.postMessage({ source: 'VD_MAIN', type: 'SUCCESS', url }, '*');
           sessions.delete(url);
@@ -205,14 +222,12 @@ export default defineContentScript({
         }
       }
 
-      const activeVideo = Array.from(document.querySelectorAll<HTMLVideoElement>('video')).find(
-        (v) => v.src === url || v.currentSrc === url
-      );
-      const wasPlaying = activeVideo ? !activeVideo.paused : false;
-
       while (true) {
         if (controller.cancelled) {
-          throw new Error('Download cancelled');
+          session.chunks = [];
+          sessions.delete(url);
+          console.log('[VideoDownloader:MainWorld] Cancelled - discarded partial chunks.');
+          return;
         }
 
         // Pause loop
@@ -221,7 +236,10 @@ export default defineContentScript({
             controller.resumeResolve = resolve;
           });
           if (controller.cancelled) {
-            throw new Error('Download cancelled');
+            session.chunks = [];
+            sessions.delete(url);
+            console.log('[VideoDownloader:MainWorld] Cancelled during pause - discarded partial chunks.');
+            return;
           }
         }
 
@@ -230,13 +248,21 @@ export default defineContentScript({
 
         // Resilient retry loop on connection drops
         while (true) {
-          if (controller.cancelled) throw new Error('Download cancelled');
+          if (controller.cancelled) {
+            session.chunks = [];
+            sessions.delete(url);
+            return;
+          }
 
           while (controller.paused) {
             await new Promise<void>((resolve) => {
               controller.resumeResolve = resolve;
             });
-            if (controller.cancelled) throw new Error('Download cancelled');
+            if (controller.cancelled) {
+              session.chunks = [];
+              sessions.delete(url);
+              return;
+            }
           }
 
           if (!navigator.onLine) {
@@ -262,12 +288,16 @@ export default defineContentScript({
           }
 
           try {
-            // Open-ended Range allows Service Worker to stream as much as possible at maximum throughput
+            const abortController = new AbortController();
+            controller.abortController = abortController;
+
+            // Open-ended Range allows Service Worker to stream continuously at maximum throughput
             chunkRes = await window.fetch(url, {
               headers: {
                 Range: `bytes=${session.offset}-`,
               },
               credentials: 'include',
+              signal: abortController.signal,
             });
 
             if (chunkRes.status === 206 || chunkRes.status === 200) {
@@ -277,7 +307,12 @@ export default defineContentScript({
             console.warn(
               `[VideoDownloader:MainWorld] Chunk HTTP ${chunkRes.status} at offset ${session.offset}. Retrying...`
             );
-          } catch (fetchErr) {
+          } catch (fetchErr: any) {
+            if (controller.cancelled || fetchErr?.name === 'AbortError') {
+              session.chunks = [];
+              sessions.delete(url);
+              return;
+            }
             console.warn(
               `[VideoDownloader:MainWorld] Network failure at offset ${session.offset} (attempt ${retryAttempt + 1}):`,
               fetchErr
@@ -285,7 +320,7 @@ export default defineContentScript({
           }
 
           retryAttempt++;
-          const backoffDelay = Math.min(4500, 400 * Math.pow(1.35, Math.min(retryAttempt, 6)));
+          const backoffDelay = Math.min(4000, 350 * Math.pow(1.3, Math.min(retryAttempt, 5)));
 
           window.postMessage(
             {
@@ -321,58 +356,83 @@ export default defineContentScript({
           if (cl) session.total = parseInt(cl, 10);
         }
 
-        // Direct Stream Reader: reads chunks with zero Blob serialization overhead!
-        // If the Service Worker feeds multiple parts in this connection, we stream all of them continuously!
+        // Direct Stream Reader: reads chunks with zero serialization overhead
         const reader = res.body?.getReader();
         let bytesReceivedInStream = 0;
+        let lastProgressTime = 0;
 
         if (reader) {
-          while (true) {
-            if (controller.cancelled || controller.paused) {
-              reader.cancel().catch(() => {});
-              break;
-            }
-
-            const { done, value } = await reader.read();
-            if (done) break;
-
-            if (value && value.length > 0) {
-              session.chunks.push(value);
-              session.offset += value.length;
-              bytesReceivedInStream += value.length;
-
-              // Calculate real-time throughput speed
-              const now = Date.now();
-              const timeDiff = (now - session.lastCalcTime) / 1000;
-              if (timeDiff >= 0.2) {
-                const bytesDiff = session.offset - session.lastCalcBytes;
-                session.currentSpeed = Math.round(bytesDiff / timeDiff);
-                session.lastCalcTime = now;
-                session.lastCalcBytes = session.offset;
+          try {
+            while (true) {
+              if (controller.cancelled) {
+                reader.cancel().catch(() => {});
+                session.chunks = [];
+                sessions.delete(url);
+                return;
               }
 
-              // Post live progress update
-              if (session.total && session.total > 0) {
-                const percent = Math.min(99, Math.round((session.offset / session.total) * 100));
-                window.postMessage(
-                  {
-                    source: 'VD_MAIN',
-                    type: 'PROGRESS',
-                    url,
-                    percent,
-                    loadedBytes: session.offset,
-                    totalBytes: session.total,
-                    speed: session.currentSpeed,
-                    format: session.format,
-                  },
-                  '*'
-                );
+              if (controller.paused) {
+                reader.cancel().catch(() => {});
+                break;
+              }
+
+              const { done, value } = await reader.read();
+              if (done) break;
+
+              if (value && value.length > 0) {
+                session.chunks.push(value);
+                session.offset += value.length;
+                bytesReceivedInStream += value.length;
+
+                // Throttled progress reporting (every 150ms)
+                // This keeps UI smooth at ~7 fps while freeing 99% of CPU time for max network speed!
+                const now = Date.now();
+                if (now - lastProgressTime >= 150) {
+                  const timeDiff = (now - session.lastCalcTime) / 1000;
+                  if (timeDiff >= 0.2) {
+                    const bytesDiff = session.offset - session.lastCalcBytes;
+                    session.currentSpeed = Math.round(bytesDiff / timeDiff);
+                    session.lastCalcTime = now;
+                    session.lastCalcBytes = session.offset;
+                  }
+
+                  lastProgressTime = now;
+
+                  if (session.total && session.total > 0) {
+                    const percent = Math.min(99, Math.round((session.offset / session.total) * 100));
+                    window.postMessage(
+                      {
+                        source: 'VD_MAIN',
+                        type: 'PROGRESS',
+                        url,
+                        percent,
+                        loadedBytes: session.offset,
+                        totalBytes: session.total,
+                        speed: session.currentSpeed,
+                        format: session.format,
+                      },
+                      '*'
+                    );
+                  }
+                }
               }
             }
+          } catch (readerErr: any) {
+            if (controller.cancelled || readerErr?.name === 'AbortError') {
+              session.chunks = [];
+              sessions.delete(url);
+              return;
+            }
+            console.warn('[VideoDownloader:MainWorld] Reader stream interrupted:', readerErr);
           }
         } else {
           // Direct fast ArrayBuffer fallback
           const buffer = await res.arrayBuffer();
+          if (controller.cancelled) {
+            session.chunks = [];
+            sessions.delete(url);
+            return;
+          }
           if (buffer.byteLength > 0) {
             const arr = new Uint8Array(buffer);
             session.chunks.push(arr);
@@ -381,14 +441,19 @@ export default defineContentScript({
           }
         }
 
+        if (controller.cancelled) {
+          session.chunks = [];
+          sessions.delete(url);
+          return;
+        }
+
+        if (controller.paused) {
+          continue;
+        }
+
         if (bytesReceivedInStream === 0) {
           console.warn('[VideoDownloader:MainWorld] Received 0 bytes at offset:', session.offset);
           break;
-        }
-
-        // Keep playing if it was active
-        if (wasPlaying && activeVideo && activeVideo.paused) {
-          activeVideo.play().catch(() => {});
         }
 
         if (session.total && session.offset >= session.total) {
@@ -398,8 +463,14 @@ export default defineContentScript({
         if (res.status === 200) {
           break;
         }
+      }
 
-        // Zero artificial delay — immediate pipelined request for the next chunk!
+      // CRITICAL CHECK: NEVER save if cancelled, or if no chunks were collected!
+      if (controller.cancelled || session.chunks.length === 0 || session.offset === 0) {
+        console.log('[VideoDownloader:MainWorld] Cancelled or empty. Discarding partial chunks without saving.');
+        session.chunks = [];
+        sessions.delete(url);
+        return;
       }
 
       console.log('[VideoDownloader:MainWorld] All stream bytes collected! Total bytes:', session.offset);
@@ -412,15 +483,17 @@ export default defineContentScript({
         ext = 'webm';
       }
 
-      let finalName = filename;
+      let finalName = session.filename;
       if (!finalName.toLowerCase().endsWith(`.${ext}`)) {
         finalName = finalName.replace(/\.[a-zA-Z0-9]+$/, '') + `.${ext}`;
       }
 
-      const finalBlob = new Blob(session.chunks, { type: session.contentType });
+      const finalBlob = new Blob(session.chunks as BlobPart[], { type: session.contentType });
       saveBlobToDisk(finalBlob, finalName);
       window.postMessage({ source: 'VD_MAIN', type: 'SUCCESS', url }, '*');
 
+      // Clear memory after saving
+      session.chunks = [];
       sessions.delete(url);
     }
 

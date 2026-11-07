@@ -1,5 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
+  formatBytes,
+  formatSpeed,
   downloadVideoWithProgress,
   generateVideoFilename,
   getVideoResolutionLabel,
@@ -16,6 +18,7 @@ export const DownloadOverlay: React.FC<DownloadOverlayProps> = ({ video }) => {
   const [format, setFormat] = useState<string>('MP4');
   const [fileSize, setFileSize] = useState<string | null>(null);
   const [taskState, setTaskState] = useState<DownloadTask | undefined>(undefined);
+  const [currentSrc, setCurrentSrc] = useState<string>('');
 
   const getSource = (): string => {
     let src = video.currentSrc || video.src;
@@ -26,23 +29,59 @@ export const DownloadOverlay: React.FC<DownloadOverlayProps> = ({ video }) => {
     return src || '';
   };
 
+  // 1. Keep track of dynamic video source changes (e.g. Telegram lazy-loading video src)
   useEffect(() => {
-    const src = getSource();
+    const syncSource = () => {
+      const src = getSource();
+      if (src && src !== currentSrc) {
+        setCurrentSrc(src);
+      }
+    };
 
-    // 1. Sync initial task state from global store
+    syncSource();
+
+    video.addEventListener('loadedmetadata', syncSource);
+    video.addEventListener('loadstart', syncSource);
+    video.addEventListener('canplay', syncSource);
+    video.addEventListener('playing', syncSource);
+
+    // Also observe attribute mutations on the video element for src changes
+    const observer = new MutationObserver(() => syncSource());
+    observer.observe(video, { attributes: true, attributeFilter: ['src', 'currentSrc'] });
+
+    return () => {
+      video.removeEventListener('loadedmetadata', syncSource);
+      video.removeEventListener('loadstart', syncSource);
+      video.removeEventListener('canplay', syncSource);
+      video.removeEventListener('playing', syncSource);
+      observer.disconnect();
+    };
+  }, [video, currentSrc]);
+
+  // 2. React to currentSrc changes and subscribe to store updates
+  useEffect(() => {
+    const src = currentSrc || getSource();
+
+    // Sync initial task state (always clone to trigger fresh React state)
     if (src) {
-      setTaskState(downloadStore.getTask(src));
+      const existingTask = downloadStore.getTask(src);
+      setTaskState(existingTask ? { ...existingTask } : undefined);
+    } else {
+      setTaskState(undefined);
     }
 
-    // 2. Subscribe to global download store updates
+    // Subscribe to store updates with a fresh object clone so React never bails out
     const unsubscribe = downloadStore.subscribe(() => {
-      const currentSrc = getSource();
-      if (currentSrc) {
-        setTaskState(downloadStore.getTask(currentSrc));
+      const activeSrc = currentSrc || getSource();
+      if (activeSrc) {
+        const task = downloadStore.getTask(activeSrc);
+        setTaskState(task ? { ...task } : undefined);
+      } else {
+        setTaskState(undefined);
       }
     });
 
-    // 3. Determine video resolution
+    // Determine video resolution
     const updateResolution = () => {
       const res = getVideoResolutionLabel(video);
       if (res) setResolution(res);
@@ -54,7 +93,7 @@ export const DownloadOverlay: React.FC<DownloadOverlayProps> = ({ video }) => {
       video.addEventListener('loadedmetadata', updateResolution, { once: true });
     }
 
-    // 4. Probe exact file size & format from Service Worker via 1-byte Range
+    // Probe exact file size & format from Service Worker via 1-byte Range
     if (src && !src.startsWith('blob:')) {
       probeVideoDetails(src).then((details) => {
         if (details) {
@@ -68,7 +107,7 @@ export const DownloadOverlay: React.FC<DownloadOverlayProps> = ({ video }) => {
       unsubscribe();
       video.removeEventListener('loadedmetadata', updateResolution);
     };
-  }, [video]);
+  }, [video, currentSrc]);
 
   const captureThumbnail = (): string | undefined => {
     try {
@@ -88,28 +127,42 @@ export const DownloadOverlay: React.FC<DownloadOverlayProps> = ({ video }) => {
     return undefined;
   };
 
-  const handleDownload = async (e: React.MouseEvent) => {
+  const handleClick = async (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
 
-    const src = getSource();
+    const src = currentSrc || getSource();
     if (!src) return;
 
-    if (taskState?.status === 'downloading') return;
+    // If currently downloading: click pauses the download
+    if (taskState?.status === 'downloading') {
+      downloadStore.pauseTask(src);
+      return;
+    }
+
+    // If currently paused: click resumes the download
+    if (taskState?.status === 'paused') {
+      downloadStore.resumeTask(src);
+      return;
+    }
 
     // Use proper extension based on probed format (MKV for matroska to preserve Opus audio!)
-    const ext = format.toLowerCase();
-    const filename = generateVideoFilename(src, ext);
+    const ext = (taskState?.format || format).toLowerCase();
+    const filename = taskState?.filename || generateVideoFilename(src, ext);
     const thumb = captureThumbnail();
 
     // Register into persistent download queue
     downloadStore.addTask(src, filename, resolution, format, undefined, thumb);
+    const initialTask = downloadStore.getTask(src);
+    if (initialTask) setTaskState({ ...initialTask });
 
     try {
       await downloadVideoWithProgress(src, filename);
     } catch (err: any) {
-      console.error('[VideoDownloader] Download trigger error:', err);
-      downloadStore.setError(src, err?.message || 'Download failed');
+      if (err?.message !== 'Download cancelled') {
+        console.error('[VideoDownloader] Download trigger error:', err);
+        downloadStore.setError(src, err?.message || 'Download failed');
+      }
     }
   };
 
@@ -117,6 +170,7 @@ export const DownloadOverlay: React.FC<DownloadOverlayProps> = ({ video }) => {
   const progressPercent = taskState?.percent || 0;
   const displayFileSize = taskState?.totalBytes ? formatBytes(taskState.totalBytes) : fileSize;
   const displayFormat = taskState?.format || format;
+  const displaySpeed = taskState?.speed ? ` • ${formatSpeed(taskState.speed)}` : '';
 
   return (
     <div className="vd-overlay-container">
@@ -125,16 +179,22 @@ export const DownloadOverlay: React.FC<DownloadOverlayProps> = ({ video }) => {
         className={`vd-button ${
           status === 'completed'
             ? 'vd-status-success'
+            : status === 'paused'
+            ? 'vd-status-paused'
             : status === 'error'
             ? 'vd-status-error'
             : ''
         }`}
-        onClick={handleDownload}
+        onClick={handleClick}
         title={
           status === 'error'
             ? taskState?.errorMessage || 'Click to retry download'
             : status === 'downloading'
-            ? 'Downloading (check download dock in bottom right)'
+            ? 'Click to pause download'
+            : status === 'paused'
+            ? 'Click to resume download'
+            : status === 'completed'
+            ? 'Download completed. Click to re-download.'
             : 'Download this video'
         }
       >
@@ -193,11 +253,40 @@ export const DownloadOverlay: React.FC<DownloadOverlayProps> = ({ video }) => {
                     style={{ width: `${progressPercent}%` }}
                   />
                 </div>
-                <span>{progressPercent}%</span>
+                <span>
+                  {progressPercent}%{displaySpeed}
+                </span>
+              </div>
+            ) : taskState?.loadedBytes && taskState.loadedBytes > 0 ? (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <div className="vd-progress-bar-wrap">
+                  <div className="vd-progress-bar-fill" style={{ width: '40%' }} />
+                </div>
+                <span>
+                  {formatBytes(taskState.loadedBytes)}
+                  {displaySpeed}
+                </span>
               </div>
             ) : (
-              <span>Queueing...</span>
+              <span>Starting...</span>
             )}
+          </>
+        )}
+
+        {status === 'paused' && (
+          <>
+            {/* Pause / Resume Icon */}
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="currentColor"
+            >
+              <path d="M5 3h4v18H5V3zm10 0h4v18h-4V3z" />
+            </svg>
+            <span>
+              {progressPercent > 0 ? `${progressPercent}% (Paused)` : 'Paused'}
+            </span>
           </>
         )}
 

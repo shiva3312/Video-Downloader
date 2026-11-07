@@ -4,7 +4,12 @@ import ReactDOM from 'react-dom/client';
 import DownloadOverlay from './DownloadOverlay';
 import DownloadManagerWidget from './DownloadManagerWidget';
 import { downloadStore } from '@/stores/downloadStore';
-import { downloadVideoWithProgress } from '@/utils/downloader';
+import {
+  downloadVideoWithProgress,
+  generateFriendlyVideoName,
+  generateVideoFilename,
+  cleanDisplayTitle,
+} from '@/utils/downloader';
 import overlayCss from './overlay.css?inline';
 import widgetCss from './widget.css?inline';
 
@@ -179,13 +184,16 @@ export default defineContentScript({
             }
             const isBlob = src?.startsWith('blob:');
             const isProgressive = src?.includes('/progressive/');
+            const videoIndex = i + 1;
             return {
-              id: i,
+              id: videoIndex,
+              index: videoIndex,
               src: src || '',
               videoWidth: v.videoWidth || 0,
               videoHeight: v.videoHeight || 0,
               duration: Math.round(v.duration || 0),
               type: isBlob ? 'Blob Stream' : isProgressive ? 'Telegram Progressive' : 'Direct MP4',
+              title: generateFriendlyVideoName(src || '', videoIndex),
             };
           })
           .filter((v) => Boolean(v.src));
@@ -228,9 +236,9 @@ export default defineContentScript({
       }
 
       if (message.type === 'TRIGGER_TAB_DOWNLOAD') {
-        const { url, filename } = message.payload;
-        downloadStore.addTask(url, filename);
-        downloadVideoWithProgress(url, filename)
+        const { url, filename, title } = message.payload;
+        const task = downloadStore.addTask(url, filename, undefined, 'MP4', title);
+        downloadVideoWithProgress(url, task.filename)
           .then(() => sendResponse({ success: true }))
           .catch((err) => sendResponse({ success: false, error: err.message }));
         return true;

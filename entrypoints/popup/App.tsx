@@ -1,14 +1,22 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { formatBytes, formatSpeed } from '@/utils/downloader';
+import {
+  formatBytes,
+  formatSpeed,
+  cleanDisplayTitle,
+  generateFriendlyVideoName,
+  generateVideoFilename,
+} from '@/utils/downloader';
 import { DownloadTask } from '@/stores/downloadStore';
 
 interface DetectedVideo {
   id: number;
+  index?: number;
   src: string;
   videoWidth: number;
   videoHeight: number;
   duration: number;
   type: string;
+  title?: string;
 }
 
 export const App: React.FC = () => {
@@ -90,14 +98,14 @@ export const App: React.FC = () => {
 
   const handleDownloadDetected = (video: DetectedVideo) => {
     if (!activeTabId) return;
-    const docMatch = video.src.match(/document(\d+)/i);
-    const filename = docMatch ? `telegram_document_${docMatch[1]}.mp4` : `video_${Date.now()}.mp4`;
+    const filename = generateVideoFilename(video.src, 'mp4', video.index || video.id || 1);
+    const title = video.title || generateFriendlyVideoName(video.src, video.index || video.id || 1);
 
     chrome.tabs.sendMessage(
       activeTabId,
       {
         type: 'TRIGGER_TAB_DOWNLOAD',
-        payload: { url: video.src, filename },
+        payload: { url: video.src, filename, title },
       },
       () => {
         setActiveTab('downloads');
@@ -115,7 +123,8 @@ export const App: React.FC = () => {
 
   const startRename = (task: DownloadTask) => {
     setEditingUrl(task.url);
-    setEditValue(task.title || task.filename.replace(/\.[a-zA-Z0-9]+$/, ''));
+    const cleanCurrentTitle = cleanDisplayTitle(task.title || task.filename, task.url);
+    setEditValue(cleanCurrentTitle.replace(/\.[a-zA-Z0-9]+$/, ''));
   };
 
   const saveRename = (url: string) => {
@@ -271,7 +280,7 @@ export const App: React.FC = () => {
                       ) : (
                         <div className="vd-title-container" onClick={() => startRename(task)}>
                           <span className="vd-task-name" title="Click to rename file">
-                            {task.title || task.filename}
+                            {cleanDisplayTitle(task.title || task.filename, task.url)}
                           </span>
                           <button
                             type="button"
@@ -416,8 +425,8 @@ export const App: React.FC = () => {
                 </div>
                 <div className="vd-task-main">
                   <div className="vd-task-title-row">
-                    <span className="vd-task-name" title={vid.src}>
-                      {vid.src.includes('document') ? `Telegram Doc ${vid.src.match(/document(\d+)/i)?.[1]}` : vid.src}
+                    <span className="vd-task-name" title={vid.title || vid.src}>
+                      {vid.title || generateFriendlyVideoName(vid.src, vid.index || vid.id || 1)}
                     </span>
                   </div>
                   <div className="vd-badges-row">

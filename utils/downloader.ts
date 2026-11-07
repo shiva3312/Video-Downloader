@@ -48,42 +48,105 @@ export function getVideoResolutionLabel(video: HTMLVideoElement): string {
 }
 
 /**
- * Extracts a sensible filename based on the video source URL and context
+ * Returns clean formatted timestamps for file saving and UI display
  */
-export function generateVideoFilename(url: string, extension: string = 'mp4'): string {
+export function getFormattedDateTime(date: Date = new Date()): { fileTimestamp: string; displayTimestamp: string } {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const yyyy = date.getFullYear();
+  const mm = pad(date.getMonth() + 1);
+  const dd = pad(date.getDate());
+  const hh = pad(date.getHours());
+  const min = pad(date.getMinutes());
+  const ss = pad(date.getSeconds());
+
+  const fileTimestamp = `${yyyy}-${mm}-${dd}_${hh}-${min}-${ss}`;
+  const displayDate = date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  const displayTime = date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit', hour12: true });
+  const displayTimestamp = `${displayDate}, ${displayTime}`;
+
+  return { fileTimestamp, displayTimestamp };
+}
+
+/**
+ * Generates a clean, friendly name for a video (e.g. "Video 1 (Nov 8, 12:15 AM)" or "Telegram Video 5516")
+ * Never returns raw "blob:..." or long URLs!
+ */
+export function generateFriendlyVideoName(url: string, index: number = 1): string {
+  const tgDocMatch = url.match(/document(\d+)/i);
+  if (tgDocMatch) {
+    const docId = tgDocMatch[1];
+    return `Telegram Video ${docId.length > 6 ? docId.slice(-4) : docId}`;
+  }
+
+  const { displayTimestamp } = getFormattedDateTime();
+  return `Video ${index} (${displayTimestamp})`;
+}
+
+/**
+ * Extracts a sensible, clean filename for saving to disk.
+ * Uses formatted dates and indices instead of raw blob URLs or unix milliseconds!
+ */
+export function generateVideoFilename(url: string, extension: string = 'mp4', index: number = 1): string {
+  const ext = extension.replace(/^\./, '').toLowerCase();
+
   try {
-    // 1. Telegram progressive URLs (e.g. /progressive/document4970121728136055163)
+    // 1. Telegram progressive URLs
     const tgDocMatch = url.match(/document(\d+)/i);
     if (tgDocMatch) {
-      let cleanTitle = '';
-      if (document.title) {
-        cleanTitle = document.title
-          .replace(/telegram/gi, '')
-          .replace(/web/gi, '')
-          .replace(/[-|·]/g, '')
-          .trim()
-          .replace(/[^a-zA-Z0-9_-]/g, '_')
-          .slice(0, 25);
+      return `telegram_document_${tgDocMatch[1]}.${ext}`;
+    }
+
+    // 2. Natural filename from clean web URLs (excluding blobs)
+    if (!url.startsWith('blob:') && !url.includes('progressive')) {
+      const urlObj = new URL(url);
+      const pathname = urlObj.pathname;
+      const filenameFromPath = pathname.substring(pathname.lastIndexOf('/') + 1);
+      if (
+        filenameFromPath &&
+        filenameFromPath.includes('.') &&
+        filenameFromPath.length < 50 &&
+        !filenameFromPath.startsWith('blob')
+      ) {
+        return filenameFromPath.replace(/[^a-zA-Z0-9._-]/g, '_');
       }
-      return cleanTitle
-        ? `telegram_${cleanTitle}_${tgDocMatch[1]}.${extension}`
-        : `telegram_document_${tgDocMatch[1]}.${extension}`;
     }
 
-    // 2. Check if URL path has a natural file name
-    const urlObj = new URL(url);
-    const pathname = urlObj.pathname;
-    const filenameFromPath = pathname.substring(pathname.lastIndexOf('/') + 1);
-    if (filenameFromPath && filenameFromPath.includes('.') && filenameFromPath.length < 60) {
-      return filenameFromPath.replace(/[^a-zA-Z0-9._-]/g, '_');
-    }
-
-    // 3. Document title + timestamp
-    const title = document.title ? document.title.slice(0, 30).trim().replace(/[^a-zA-Z0-9]/g, '_') : 'video';
-    return `${title}_${Date.now()}.${extension}`;
+    // 3. Formatted timestamp fallback (e.g. Video_1_2026-11-08_00-15-30.mp4)
+    const { fileTimestamp } = getFormattedDateTime();
+    return `Video_${index}_${fileTimestamp}.${ext}`;
   } catch {
-    return `video_${Date.now()}.${extension}`;
+    const { fileTimestamp } = getFormattedDateTime();
+    return `Video_${index}_${fileTimestamp}.${ext}`;
   }
+}
+
+/**
+ * Sanitizes any raw title or URL string into a friendly user-facing label.
+ * Converts raw "blob:https://..." or "http..." into "Video 1 (Nov 8, 12:15 AM)".
+ */
+export function cleanDisplayTitle(rawTitle: string | undefined, url?: string, fallbackIndex: number = 1): string {
+  if (!rawTitle) {
+    return generateFriendlyVideoName(url || '', fallbackIndex);
+  }
+
+  // If the title is literally a blob URL or web URL, replace with friendly name
+  if (
+    rawTitle.startsWith('blob:') ||
+    rawTitle.startsWith('http://') ||
+    rawTitle.startsWith('https://') ||
+    rawTitle.includes('://')
+  ) {
+    return generateFriendlyVideoName(url || rawTitle, fallbackIndex);
+  }
+
+  // If the title is a raw telegram_document_123456 filename, clean it up for display
+  const tgDocMatch = rawTitle.match(/document(\d+)/i) || url?.match(/document(\d+)/i);
+  if (tgDocMatch && rawTitle.toLowerCase().startsWith('telegram_document_')) {
+    const docId = tgDocMatch[1];
+    return `Telegram Video ${docId.length > 6 ? docId.slice(-4) : docId}`;
+  }
+
+  return rawTitle;
 }
 
 /**

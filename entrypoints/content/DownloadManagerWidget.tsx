@@ -1,6 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { downloadStore, DownloadTask } from '@/stores/downloadStore';
-import { formatBytes, formatSpeed, downloadVideoWithProgress } from '@/utils/downloader';
+import {
+  formatBytes,
+  formatSpeed,
+  downloadVideoWithProgress,
+  cleanDisplayTitle,
+} from '@/utils/downloader';
 
 export const DownloadManagerWidget: React.FC = () => {
   const [tasks, setTasks] = useState<DownloadTask[]>([]);
@@ -47,7 +52,8 @@ export const DownloadManagerWidget: React.FC = () => {
 
   const startRename = (task: DownloadTask) => {
     setEditingUrl(task.url);
-    setEditValue(task.title || task.filename.replace(/\.[a-zA-Z0-9]+$/, ''));
+    const cleanCurrentTitle = cleanDisplayTitle(task.title || task.filename, task.url);
+    setEditValue(cleanCurrentTitle.replace(/\.[a-zA-Z0-9]+$/, ''));
   };
 
   const saveRename = (url: string) => {
@@ -193,7 +199,7 @@ export const DownloadManagerWidget: React.FC = () => {
                       ) : (
                         <div className="vd-title-container" onClick={() => startRename(task)}>
                           <span className="vd-task-name" title="Click to rename file">
-                            {task.title || task.filename}
+                            {cleanDisplayTitle(task.title || task.filename, task.url)}
                           </span>
                           <button
                             type="button"

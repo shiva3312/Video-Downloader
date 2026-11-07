@@ -4,6 +4,8 @@ import {
   formatSpeed,
   downloadVideoWithProgress,
   generateVideoFilename,
+  generateFriendlyVideoName,
+  cleanDisplayTitle,
   getVideoResolutionLabel,
   probeVideoDetails,
 } from '@/utils/downloader';
@@ -148,11 +150,12 @@ export const DownloadOverlay: React.FC<DownloadOverlayProps> = ({ video }) => {
 
     // Use proper extension based on probed format (MKV for matroska to preserve Opus audio!)
     const ext = (taskState?.format || format).toLowerCase();
-    const filename = taskState?.filename || generateVideoFilename(src, ext);
+    const filename = taskState?.filename || generateVideoFilename(src, ext, 1);
+    const friendlyTitle = generateFriendlyVideoName(src, 1);
     const thumb = captureThumbnail();
 
     // Register into persistent download queue
-    downloadStore.addTask(src, filename, resolution, format, undefined, thumb);
+    downloadStore.addTask(src, filename, resolution, format, friendlyTitle, thumb);
     const initialTask = downloadStore.getTask(src);
     if (initialTask) setTaskState({ ...initialTask });
 

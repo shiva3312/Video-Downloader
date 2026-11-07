@@ -1,3 +1,5 @@
+import { cleanDisplayTitle, generateVideoFilename } from '@/utils/downloader';
+
 export interface DownloadTask {
   id: string;
   url: string;
@@ -48,11 +50,19 @@ class DownloadStore {
       return existing;
     }
 
+    const taskIndex = this.tasks.size + 1;
+    const safeFilename =
+      filename && !filename.startsWith('blob:') && !filename.startsWith('http')
+        ? filename
+        : generateVideoFilename(url, format.toLowerCase(), taskIndex);
+
+    const safeTitle = cleanDisplayTitle(title || safeFilename, url, taskIndex);
+
     const task: DownloadTask = {
       id: url,
       url,
-      filename,
-      title: title || filename.replace(/\.[a-zA-Z0-9]+$/, ''),
+      filename: safeFilename,
+      title: safeTitle,
       format: format.toUpperCase(),
       resolution,
       thumbnail: thumbnail || existing?.thumbnail,

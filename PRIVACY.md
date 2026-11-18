@@ -20,6 +20,7 @@ Video Downloader (Web & Telegram) ("we", "our", or "the extension") values your 
 
 ## 3. Permissions Justification
 - **`activeTab`**: Used strictly to inspect the active browser tab for `<video>` elements and communicate with the page overlay when the extension popup is opened by the user.
+- **`sidePanel`**: Used to display the user's private Media Vault sidebar for viewing, previewing, and managing saved videos, photos, and chat screenshots alongside the active browser tab.
 - **Host Permissions (`*://*/*`)**: Required to detect video elements, stream video data chunks directly from media hosts, and communicate with in-page Service Workers (such as on Telegram Web) to stream progressive video documents.
 
 ---

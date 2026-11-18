@@ -16,15 +16,58 @@ import {
   getImageResolutionLabel,
   isImageUrl,
 } from '@/utils/downloader';
+import { isSupportedDomain } from '@/utils/mediaDetector';
 import overlayCss from './overlay.css?inline';
 import widgetCss from './widget.css?inline';
 
 export default defineContentScript({
-  matches: ['*://web.telegram.org/*', '*://*/*'],
+  matches: [
+    '*://web.telegram.org/*',
+    '*://*.telegram.org/*',
+    '*://www.snapchat.com/*',
+    '*://web.snapchat.com/*',
+    '*://*.snapchat.com/*',
+  ],
   cssInjectionMode: 'manual',
   runAt: 'document_idle',
   main(ctx) {
-    console.log('[VideoDownloader] Content script loaded on:', window.location.href);
+    // Strictly restrict extension UI, download buttons, chat selector, and observers to Telegram & Snapchat only
+    if (!isSupportedDomain(window.location.href)) {
+      return;
+    }
+
+    console.log('[VideoDownloader] Content script loaded on supported domain:', window.location.href);
+
+    // Stop blur events from propagating or hiding elements
+    window.addEventListener('blur', (e) => e.stopImmediatePropagation(), true);
+    document.addEventListener('visibilitychange', (e) => e.stopImmediatePropagation(), true);
+
+    // Staged media files for seamless Ctrl+V paste inside web chats (e.g. Telegram Web)
+    let stagedMediaFiles: File[] = [];
+    let stagedMediaTimestamp = 0;
+
+    window.addEventListener(
+      'paste',
+      (e: ClipboardEvent) => {
+        if (stagedMediaFiles.length > 0 && Date.now() - stagedMediaTimestamp < 120000) {
+          if (!e.clipboardData || e.clipboardData.files.length === 0) {
+            const isSnapchat = window.location.hostname.includes('snapchat.com');
+            const filesToPaste = isSnapchat
+              ? stagedMediaFiles.filter(
+                  (f) => !f.type.startsWith('video/') && !/\.(mp4|webm|mkv|mov|avi)$/i.test(f.name)
+                )
+              : [...stagedMediaFiles];
+            stagedMediaFiles = [];
+            if (filesToPaste.length > 0) {
+              e.preventDefault();
+              e.stopImmediatePropagation();
+              injectMediaIntoChat(filesToPaste, '');
+            }
+          }
+        }
+      },
+      true
+    );
 
     // 1. Mount Persistent Download Manager Widget on document.body
     mountPersistentWidget();
@@ -182,6 +225,16 @@ export default defineContentScript({
      * Attaches the React download overlay to a target video element
      */
     function attachOverlayToVideo(video: HTMLVideoElement) {
+      // Never attach to 0 KB or uninitialized placeholder video with no dimensions & no duration
+      if (
+        video.readyState >= 1 &&
+        video.videoWidth === 0 &&
+        video.videoHeight === 0 &&
+        (!video.duration || video.duration === 0)
+      ) {
+        return;
+      }
+
       // 1. Target parent: on Snapchat, outer card is .f8j5n so the overlay sits at top-left
       // above any snap action overlays. On Telegram and standard players, video.parentElement.
       const snapCard = video.closest<HTMLElement>('.f8j5n, [class*="snap"], [class*="Snap"]');
@@ -355,8 +408,18 @@ export default defineContentScript({
       const clientW = img.clientWidth || img.offsetWidth || 0;
       const clientH = img.clientHeight || img.offsetHeight || 0;
 
+      // Broken or 0 KB empty image
+      if (img.complete && naturalW === 0 && naturalH === 0) {
+        return false;
+      }
+
       const w = Math.max(attrW, naturalW, clientW);
       const h = Math.max(attrH, naturalH, clientH);
+
+      // Never attach to 0x0 or 0 KB images
+      if (w === 0 || h === 0) {
+        return false;
+      }
 
       // Snapchat photo snap check (matches classes e.g. ChG6a dCE9D or snapchat.com blob)
       const isSnapchatMedia =
@@ -368,9 +431,9 @@ export default defineContentScript({
         return true;
       }
 
-      // Blob images (Telegram, Snapchat, WhatsApp, etc.)
+      // Blob images (Telegram, Snapchat, WhatsApp, etc.) - require valid non-zero dimensions
       if (src.startsWith('blob:')) {
-        return (w >= 100 && h >= 100) || (w === 0 && h === 0) || w >= 150 || h >= 150;
+        return (w >= 80 && h >= 80);
       }
 
       // Standard images: filter out small icons, emojis, badges, and avatars
@@ -506,6 +569,15 @@ export default defineContentScript({
         'video, video.full-media, video.nauoE, [class*="snap"] video, [class*="player"] video'
       );
       videos.forEach((video) => {
+        // Exclude empty 0 KB placeholder videos
+        if (
+          video.readyState >= 1 &&
+          video.videoWidth === 0 &&
+          video.videoHeight === 0 &&
+          (!video.duration || video.duration === 0)
+        ) {
+          return;
+        }
         if (
           video.offsetWidth > 0 ||
           video.offsetHeight > 0 ||
@@ -550,10 +622,15 @@ export default defineContentScript({
 
     function notifyMediaCount() {
       const activeVideos = Array.from(document.querySelectorAll<HTMLVideoElement>('video')).filter(
-        (v) => v.src || v.currentSrc || v.querySelector('source')
+        (v) =>
+          (v.src || v.currentSrc || v.querySelector('source')) &&
+          !(v.readyState >= 1 && v.videoWidth === 0 && v.videoHeight === 0 && (!v.duration || v.duration === 0))
       );
       const activeImages = Array.from(document.querySelectorAll<HTMLImageElement>('img')).filter(
-        (img) => shouldAttachToImage(img) || (mountedImages.has(img) && !isImagePosterOrOverlappingVideo(img))
+        (img) =>
+          !isImagePosterOrOverlappingVideo(img) &&
+          !(img.complete && img.naturalWidth === 0 && img.naturalHeight === 0) &&
+          (shouldAttachToImage(img) || mountedImages.has(img))
       );
       const count = activeVideos.length + activeImages.length;
       try {
@@ -583,30 +660,55 @@ export default defineContentScript({
             const isBlob = src?.startsWith('blob:');
             const isProgressive = src?.includes('/progressive/');
             const videoIndex = i + 1;
+            const w = v.videoWidth || 0;
+            const h = v.videoHeight || 0;
+            const dur = Math.round(v.duration || 0);
+
+            // True 0 KB check: if element has 0 width, 0 height, and 0 duration
+            const isZeroKb = w === 0 && h === 0 && dur === 0;
+
             return {
               id: videoIndex,
               index: videoIndex,
               src: src || '',
               mediaType: 'video' as const,
-              videoWidth: v.videoWidth || 0,
-              videoHeight: v.videoHeight || 0,
-              duration: Math.round(v.duration || 0),
+              videoWidth: w,
+              videoHeight: h,
+              duration: dur,
               type: isBlob ? 'Blob Stream' : isProgressive ? 'Telegram Progressive' : 'Direct MP4',
               title: generateFriendlyVideoName(src || '', videoIndex),
+              isZeroKb,
             };
           })
-          .filter((v) => Boolean(v.src));
+          .filter((v) => Boolean(v.src) && !v.isZeroKb);
 
-        const images = Array.from(document.querySelectorAll<HTMLImageElement>('img')).filter((img) =>
-          !isImagePosterOrOverlappingVideo(img) && (shouldAttachToImage(img) || mountedImages.has(img))
+        const images = Array.from(document.querySelectorAll<HTMLImageElement>('img')).filter(
+          (img) =>
+            !isImagePosterOrOverlappingVideo(img) &&
+            !(img.complete && img.naturalWidth === 0 && img.naturalHeight === 0) &&
+            (shouldAttachToImage(img) || mountedImages.has(img))
         );
         const imageList = images
           .map((img, i) => {
             const src = img.currentSrc || img.src;
-            const w = img.naturalWidth || parseInt(img.getAttribute('width') || '0', 10) || img.clientWidth;
-            const h = img.naturalHeight || parseInt(img.getAttribute('height') || '0', 10) || img.clientHeight;
+            const attrW = parseInt(img.getAttribute('width') || '0', 10);
+            const attrH = parseInt(img.getAttribute('height') || '0', 10);
+            const naturalW = img.naturalWidth || 0;
+            const naturalH = img.naturalHeight || 0;
+            const clientW = img.clientWidth || img.offsetWidth || 0;
+            const clientH = img.clientHeight || img.offsetHeight || 0;
+
+            const w = Math.max(attrW, naturalW, clientW);
+            const h = Math.max(attrH, naturalH, clientH);
             const isBlob = src?.startsWith('blob:');
             const imgIndex = videoList.length + i + 1;
+
+            // 0 KB check: 0 width & 0 height, or broken image, or tiny spacer
+            const isZeroKb =
+              (w === 0 && h === 0) ||
+              (img.complete && naturalW === 0 && naturalH === 0) ||
+              (w < 40 && h < 40);
+
             return {
               id: imgIndex,
               index: imgIndex,
@@ -617,9 +719,10 @@ export default defineContentScript({
               duration: 0,
               type: isBlob ? 'Blob Photo' : 'Image',
               title: generateFriendlyImageName(src || '', i + 1),
+              isZeroKb,
             };
           })
-          .filter((img) => Boolean(img.src));
+          .filter((img) => Boolean(img.src) && !img.isZeroKb);
 
         sendResponse({
           videos: [...videoList, ...imageList],
@@ -697,8 +800,215 @@ export default defineContentScript({
         return true;
       }
 
+      if (message.type === 'PASTE_MEDIA_TO_CHAT') {
+        const { items } = message.payload || {};
+        if (!items || !Array.isArray(items) || items.length === 0) {
+          sendResponse({ success: false, error: 'No items to paste' });
+          return true;
+        }
+
+        (async () => {
+          try {
+            const files: File[] = [];
+            let combinedText = '';
+
+            for (const item of items) {
+              if (item.type === 'text') {
+                if (item.text) {
+                  combinedText += (combinedText ? '\n\n' : '') + item.text;
+                }
+              } else if (item.dataUrl) {
+                const res = await fetch(item.dataUrl);
+                const blob = await res.blob();
+                const ext = (item.format || 'bin').toLowerCase();
+                let fileName = item.title || `media_${Date.now()}`;
+                if (!fileName.toLowerCase().endsWith(`.${ext}`)) {
+                  fileName = `${fileName}.${ext}`;
+                }
+                const file = new File([blob], fileName, {
+                  type: item.mimeType || blob.type || 'application/octet-stream',
+                });
+                files.push(file);
+              } else if (item.sourceUrl) {
+                try {
+                  const res = await fetch(item.sourceUrl);
+                  const blob = await res.blob();
+                  const ext = (item.format || 'bin').toLowerCase();
+                  let fileName = item.title || `media_${Date.now()}`;
+                  if (!fileName.toLowerCase().endsWith(`.${ext}`)) {
+                    fileName = `${fileName}.${ext}`;
+                  }
+                  const file = new File([blob], fileName, {
+                    type: item.mimeType || blob.type || 'application/octet-stream',
+                  });
+                  files.push(file);
+                } catch (e) {
+                  console.warn('[VideoDownloader] Failed to fetch sourceUrl for chat paste:', e);
+                }
+              }
+            }
+
+            const success = injectMediaIntoChat(files, combinedText);
+            sendResponse({ success });
+          } catch (err: any) {
+            console.error('[VideoDownloader] Error pasting media to chat:', err);
+            sendResponse({ success: false, error: err?.message || 'Failed to paste media' });
+          }
+        })();
+        return true;
+      }
+
+      if (message.type === 'STAGE_CLIPBOARD_MEDIA') {
+        const { dataUrl, filename, mimeType } = message.payload || {};
+        if (dataUrl) {
+          fetch(dataUrl)
+            .then((r) => r.blob())
+            .then((blob) => {
+              const file = new File([blob], filename || `media_${Date.now()}`, {
+                type: mimeType || blob.type || 'application/octet-stream',
+              });
+              stagedMediaFiles = [file];
+              stagedMediaTimestamp = Date.now();
+              sendResponse({ success: true });
+            })
+            .catch(() => sendResponse({ success: false }));
+          return true;
+        }
+        sendResponse({ success: false });
+        return true;
+      }
+
       return false;
     });
+
+    /**
+     * Injects binary files (videos, images) and text transcripts directly into
+     * Telegram Web, Snapchat Web, and modern web chat composers via clean paste and attachment input.
+     * Note: Drag and drop events are strictly omitted to prevent activating full-screen drop overlays.
+     */
+    function injectMediaIntoChat(files: File[], text: string): boolean {
+      const composerSelectors = [
+        // Snapchat Web active chat container (.aXEpU)
+        '.aXEpU [contenteditable="true"]',
+        '.aXEpU [role="textbox"]',
+        '.aXEpU textarea',
+        'div[aria-label*="chat" i]',
+        'div[aria-placeholder*="chat" i]',
+        'div[data-slate-editor="true"]',
+        '[role="textbox"]',
+        'div[contenteditable="true"]',
+        // Telegram Web inputs
+        'div.input-message-input',
+        'div.composer-input',
+        '#editable-message-text',
+        'div.chat-input',
+        // Generic inputs
+        'textarea[placeholder*="message" i]',
+        'textarea[placeholder*="chat" i]',
+        'textarea',
+        'input[type="text"][placeholder*="message" i]',
+      ];
+
+      let target: HTMLElement | null = null;
+
+      // Snapchat Web preference: check inside active conversation container first
+      const snapContainer = document.querySelector('.aXEpU');
+      if (snapContainer) {
+        target = snapContainer.querySelector<HTMLElement>('[contenteditable="true"], [role="textbox"], textarea');
+      }
+
+      if (!target) {
+        for (const sel of composerSelectors) {
+          const el = document.querySelector<HTMLElement>(sel);
+          if (el && el.offsetParent !== null) {
+            target = el;
+            break;
+          }
+        }
+      }
+
+      if (!target) {
+        target = (document.activeElement as HTMLElement) || document.body;
+      }
+
+      // 1. Text insertion
+      if (text) {
+        try {
+          target.focus();
+          const inserted = document.execCommand('insertText', false, text);
+          if (!inserted) {
+            if (target.isContentEditable) {
+              target.innerText = (target.innerText || '') + text;
+              target.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }));
+            } else if ('value' in target) {
+              (target as HTMLInputElement).value += text;
+              target.dispatchEvent(new Event('input', { bubbles: true }));
+              target.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+          }
+        } catch (e) {
+          console.warn('[VideoDownloader] Text insertion failed:', e);
+        }
+      }
+
+      // 2. Binary files injection (videos, images)
+      // Note: On Snapchat Web, video files are strictly omitted because Snapchat Web chat only supports
+      // image files (PNG, JPG, GIF) and rejects video uploads with "You can't send this type of file".
+      const isSnapchat = window.location.hostname.includes('snapchat.com');
+      let filesToInject = files;
+
+      if (isSnapchat && files && files.length > 0) {
+        filesToInject = files.filter((f) => {
+          const isVideo = f.type.startsWith('video/') || /\.(mp4|webm|mkv|mov|avi)$/i.test(f.name);
+          return !isVideo;
+        });
+
+        if (filesToInject.length === 0) {
+          console.warn('[VideoDownloader] Suppressed video file injection on Snapchat Web: Snapchat Web only accepts photo files (PNG/JPG/GIF).');
+          return false;
+        }
+      }
+
+      if (filesToInject && filesToInject.length > 0) {
+        const dt = new DataTransfer();
+        for (const f of filesToInject) {
+          dt.items.add(f);
+        }
+
+        try {
+          target.focus();
+        } catch {}
+
+        // A. Dispatch ClipboardEvent 'paste' directly on target, document, and window
+        // (No dragenter / dragover to prevent opening full-screen drag overlays)
+        try {
+          const pasteEvent = new ClipboardEvent('paste', {
+            bubbles: true,
+            cancelable: true,
+            clipboardData: dt,
+          });
+          target.dispatchEvent(pasteEvent);
+          document.dispatchEvent(new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: dt }));
+          window.dispatchEvent(new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: dt }));
+        } catch (e) {
+          console.warn('[VideoDownloader] Paste event dispatch failed:', e);
+        }
+
+        // B. Populate file inputs (e.g. Telegram Web A / Web K attach menu file input)
+        try {
+          const fileInputs = Array.from(document.querySelectorAll<HTMLInputElement>('input[type="file"]'));
+          for (const fi of fileInputs) {
+            try {
+              fi.files = dt.files;
+              fi.dispatchEvent(new Event('change', { bubbles: true }));
+              fi.dispatchEvent(new Event('input', { bubbles: true }));
+            } catch (err) {}
+          }
+        } catch {}
+      }
+
+      return true;
+    }
 
     // Use MutationObserver to detect dynamically mounted media (essential for Telegram & Snapchat SPAs)
     let debounceTimer: any = null;

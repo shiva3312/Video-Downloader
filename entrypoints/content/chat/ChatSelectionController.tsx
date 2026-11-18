@@ -13,6 +13,7 @@ import {
   formatMessagesAsText,
   renderMessagesAsBlob,
 } from './chatFormatter';
+import { isSupportedDomain } from '@/utils/mediaDetector';
 import chatCss from './chatStyles.css?inline';
 
 const INJECTED_STYLE_ID = 'vd-chat-selection-styles';
@@ -125,6 +126,7 @@ export class ChatSelectionManager {
   private projectionObserver: MutationObserver | null = null;
 
   constructor() {
+    if (!isSupportedDomain()) return;
     this.injectGlobalStyles();
     this.mountShadowUI();
     this.attachEventListeners();
@@ -132,6 +134,7 @@ export class ChatSelectionManager {
   }
 
   private injectGlobalStyles() {
+    if (!isSupportedDomain()) return;
     if (document.getElementById(INJECTED_STYLE_ID)) return;
     const style = document.createElement('style');
     style.id = INJECTED_STYLE_ID;
@@ -140,6 +143,7 @@ export class ChatSelectionManager {
   }
 
   public ensureMounted() {
+    if (!isSupportedDomain()) return;
     this.injectGlobalStyles();
     this.checkChatProjectionChange();
     const existing = document.getElementById('vd-chat-selection-host');
@@ -268,6 +272,7 @@ export class ChatSelectionManager {
           onClear={() => this.clearSelection()}
           onCopyText={() => this.handleCopyText()}
           onCopyImage={() => this.handleCopyImage()}
+          onSaveToVault={() => this.handleSaveToVault()}
           toastMessage={this.toastMessage}
         />
       </React.StrictMode>
@@ -275,6 +280,7 @@ export class ChatSelectionManager {
   }
 
   public toggleSelectionMode(forceState?: boolean) {
+    if (!isSupportedDomain()) return;
     this.isSelecting = forceState !== undefined ? forceState : !this.isSelecting;
     document.body.setAttribute('data-vd-chat-active', this.isSelecting ? 'true' : 'false');
 
@@ -438,9 +444,52 @@ export class ChatSelectionManager {
     const count = this.selectedMessages.length;
     const ok = await copyMessagesToClipboard(this.selectedMessages);
     if (ok) {
+      // Also automatically save the text transcript into the user's encrypted Media Vault
+      const transcript = formatMessagesAsText(this.selectedMessages);
+      const participants = Array.from(
+        new Set(this.selectedMessages.map((m) => m.sender).filter(Boolean))
+      );
+      const title = participants.length > 0
+        ? `Chat: ${participants.join(' ↔ ')} (${count} msgs)`
+        : `Chat Text (${count} msgs)`;
+
+      try {
+        chrome.runtime
+          .sendMessage({
+            type: 'VAULT_SAVE_IN_PROGRESS',
+            payload: { type: 'text', title },
+          })
+          .catch(() => {});
+      } catch {}
+
+      chrome.runtime.sendMessage({
+        type: 'VAULT_SAVE_ITEM',
+        payload: {
+          type: 'text',
+          title,
+          sourceUrl: window.location.href,
+          format: 'TXT',
+          textContent: transcript,
+          sizeBytes: new Blob([transcript]).size,
+          chatMeta: {
+            participants,
+            messageCount: count,
+            formattedTranscript: transcript,
+            sourceApp: window.location.hostname.includes('telegram')
+              ? 'telegram'
+              : 'generic',
+          },
+          textMeta: {
+            wordCount: transcript.split(/\s+/).filter(Boolean).length,
+            charCount: transcript.length,
+            previewSnippet: transcript.substring(0, 160),
+          },
+        },
+      });
+
       // Exit selection cleanly and allow user to make a fresh selection
       this.clearSelection(false);
-      this.showToast(`✅ Copied ${count} messages as text!`);
+      this.showToast(`✅ Copied & saved ${count} messages to Vault!`);
     } else {
       this.showToast('❌ Failed to copy to clipboard');
     }
@@ -781,23 +830,60 @@ export class ChatSelectionManager {
           }
         }
 
-        // 2. Download screenshot PNG directly
-        const url = URL.createObjectURL(finalBlob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `chat-screenshot-${Date.now()}.png`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        setTimeout(() => URL.revokeObjectURL(url), 2000);
+        // 2. Automatically archive screenshot & transcript in user's encrypted Media Vault (no PC download)
+        try {
+          const reader = new FileReader();
+          reader.onload = () => {
+            const dataUrl = reader.result as string;
+            const participants = Array.from(
+              new Set(this.selectedMessages.map((m) => m.sender).filter(Boolean))
+            );
+            const transcript = formatMessagesAsText(this.selectedMessages);
+            const title = participants.length > 0
+              ? `Chat: ${participants.join(' ↔ ')} (${count} msgs)`
+              : `Chat Screenshot (${count} msgs)`;
+
+            try {
+              chrome.runtime
+                .sendMessage({
+                  type: 'VAULT_SAVE_IN_PROGRESS',
+                  payload: { type: 'chat_screenshot', title },
+                })
+                .catch(() => {});
+            } catch {}
+
+            chrome.runtime.sendMessage({
+              type: 'VAULT_SAVE_ITEM',
+              payload: {
+                type: 'chat_screenshot',
+                title,
+                sourceUrl: window.location.href,
+                format: 'PNG',
+                dataUrl,
+                sizeBytes: finalBlob.size,
+                chatMeta: {
+                  participants,
+                  messageCount: count,
+                  formattedTranscript: transcript,
+                  sourceApp: window.location.hostname.includes('telegram')
+                    ? 'telegram'
+                    : 'generic',
+                },
+              },
+            });
+          };
+          reader.readAsDataURL(finalBlob);
+        } catch (vaultErr) {
+          console.warn('[ChatSelector] Background vault archive error:', vaultErr);
+        }
 
         // 3. Cleanly exit selection mode
         this.clearSelection(false);
 
         if (copiedToClipboard) {
-          this.showToast(`📸 Screenshot (${count} messages) copied & saved to Downloads!`);
+          this.showToast(`📸 Screenshot (${count} msgs) copied & saved to Vault!`);
         } else {
-          this.showToast(`📸 Screenshot saved to Downloads!`);
+          this.showToast(`📸 Screenshot saved to Vault!`);
         }
         return;
       }

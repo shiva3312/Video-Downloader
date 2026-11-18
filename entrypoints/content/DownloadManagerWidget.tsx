@@ -50,7 +50,7 @@ export const DownloadManagerWidget: React.FC = () => {
     downloadStore.addTask(task.url, task.filename, task.resolution, task.format, task.title, task.thumbnail);
     const isImg = ['JPG', 'JPEG', 'PNG', 'WEBP', 'GIF', 'SVG', 'IMAGE'].includes(task.format.toUpperCase());
     if (isImg) {
-      downloadImage(task.url, task.filename)
+      downloadImage(task.url, task.filename, task.thumbnail)
         .then(() => {
           downloadStore.setCompleted(task.url);
         })
@@ -58,7 +58,7 @@ export const DownloadManagerWidget: React.FC = () => {
           downloadStore.setError(task.url, err.message);
         });
     } else {
-      downloadVideoWithProgress(task.url, task.filename);
+      downloadVideoWithProgress(task.url, task.filename, undefined, task.thumbnail);
     }
   };
 
@@ -83,7 +83,7 @@ export const DownloadManagerWidget: React.FC = () => {
           type="button"
           className="vd-fab"
           onClick={() => setIsOpen(true)}
-          title="Open Download Manager"
+          title="Open Saved Media Queue"
         >
           <svg
             width="15"
@@ -95,11 +95,9 @@ export const DownloadManagerWidget: React.FC = () => {
             strokeLinecap="round"
             strokeLinejoin="round"
           >
-            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-            <polyline points="7 10 12 15 17 10" />
-            <line x1="12" y1="15" x2="12" y2="3" />
+            <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" />
           </svg>
-          <span>Downloads</span>
+          <span>Saved</span>
           {activeCount > 0 && <span className="vd-fab-badge">{activeCount}</span>}
         </button>
       ) : (
@@ -107,7 +105,7 @@ export const DownloadManagerWidget: React.FC = () => {
         <div className="vd-panel">
           <header className="vd-panel-header">
             <div className="vd-panel-title-wrap">
-              <span className="vd-panel-title">Downloads</span>
+              <span className="vd-panel-title">Saved Media</span>
               {activeCount > 0 && <span className="vd-fab-badge">{activeCount}</span>}
             </div>
             <div className="vd-panel-actions">
@@ -271,7 +269,7 @@ export const DownloadManagerWidget: React.FC = () => {
                         type="button"
                         className="vd-action-btn pause-btn"
                         onClick={() => handlePauseResume(task)}
-                        title={task.status === 'downloading' ? 'Pause download' : 'Resume download'}
+                        title={task.status === 'downloading' ? 'Pause saving' : 'Resume saving'}
                       >
                         {task.status === 'downloading' ? (
                           <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
@@ -286,7 +284,7 @@ export const DownloadManagerWidget: React.FC = () => {
                       </button>
                     )}
 
-                    {/* Download / Redownload Button */}
+                    {/* Save / Retry Save Button */}
                     {(task.status === 'completed' ||
                       task.status === 'error' ||
                       task.status === 'paused') && (
@@ -294,7 +292,7 @@ export const DownloadManagerWidget: React.FC = () => {
                         type="button"
                         className="vd-action-btn download-btn"
                         onClick={() => handleDownload(task)}
-                        title="Download / Save to disk"
+                        title="Save to Vault"
                       >
                         <svg
                           width="11"
@@ -304,9 +302,7 @@ export const DownloadManagerWidget: React.FC = () => {
                           stroke="currentColor"
                           strokeWidth="2.2"
                         >
-                          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                          <polyline points="7 10 12 15 17 10" />
-                          <line x1="12" y1="15" x2="12" y2="3" />
+                          <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" />
                         </svg>
                       </button>
                     )}

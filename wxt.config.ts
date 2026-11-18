@@ -4,11 +4,12 @@ import { defineConfig } from 'wxt';
 export default defineConfig({
   modules: ['@wxt-dev/module-react'],
   manifest: {
-    name: 'Video Downloader (Web & Telegram)',
-    description: 'Detects and downloads progressive videos, streams, and blobs from Telegram Web and other websites with one click.',
+    name: 'Video Downloader (Telegram & Snapchat)',
+    description: 'Detects and downloads progressive videos, streams, and blobs exclusively from Telegram Web and Snapchat Web with private encrypted vault storage.',
     version: '1.0.1',
     permissions: [
-      'activeTab'
+      'activeTab',
+      'sidePanel'
     ],
     host_permissions: [
       '*://*/*',

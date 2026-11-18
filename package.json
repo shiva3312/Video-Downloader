@@ -12,7 +12,8 @@
     "build:firefox": "wxt build -b firefox",
     "zip": "wxt zip",
     "zip:firefox": "wxt zip -b firefox",
-    "compile": "tsc --noEmit"
+    "compile": "tsc --noEmit",
+    "key": "node scripts/generate-key.mjs"
   },
   "dependencies": {
     "lucide-react": "^0.460.0",

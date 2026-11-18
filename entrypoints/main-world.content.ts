@@ -1,4 +1,5 @@
 import { defineContentScript } from 'wxt/sandbox';
+import { detectMediaContainer, isSupportedDomain } from '@/utils/mediaDetector';
 
 interface DownloadController {
   paused: boolean;
@@ -22,11 +23,26 @@ interface DownloadSession {
 }
 
 export default defineContentScript({
-  matches: ['*://web.telegram.org/*', '*://*/*'],
+  matches: [
+    '*://web.telegram.org/*',
+    '*://*.telegram.org/*',
+    '*://www.snapchat.com/*',
+    '*://web.snapchat.com/*',
+    '*://*.snapchat.com/*',
+  ],
   world: 'MAIN',
   runAt: 'document_start',
   main() {
+    // Strictly restrict Main World streaming bridge to Telegram & Snapchat
+    if (!isSupportedDomain(window.location.href)) {
+      return;
+    }
+
     console.log('[VideoDownloader:MainWorld] Initialized high-performance streaming in MAIN world.');
+
+    // Stop blur events from propagating or hiding elements
+    window.addEventListener('blur', (e) => e.stopImmediatePropagation(), true);
+    document.addEventListener('visibilitychange', (e) => e.stopImmediatePropagation(), true);
 
     // Persistent sessions map so downloads RESUME from the exact same byte offset!
     const downloadSessions = new Map<string, DownloadSession>();
@@ -106,39 +122,56 @@ export default defineContentScript({
               const probeRes = await window.fetch(url);
               const blob = await probeRes.blob();
               let format = 'MP4';
-              const contentType = blob.type || '';
+              let contentType = blob.type || '';
+
+              try {
+                const headerBuf = await blob.slice(0, 128).arrayBuffer();
+                const sniffed = detectMediaContainer(new Uint8Array(headerBuf));
+                format = sniffed.format;
+                contentType = sniffed.mimeType;
+              } catch {}
+
               if (contentType.includes('matroska')) format = 'MKV';
               else if (contentType.includes('webm')) format = 'WEBM';
 
-              if (blob.size > 0) {
-                window.postMessage(
-                  {
-                    source: 'VD_MAIN',
-                    type: 'PROBE_RESULT',
-                    url,
-                    totalBytes: blob.size,
-                    format,
-                  },
-                  '*'
-                );
-              }
+              window.postMessage(
+                {
+                  source: 'VD_MAIN',
+                  type: 'PROBE_RESULT',
+                  url,
+                  totalBytes: blob.size,
+                  format,
+                },
+                '*'
+              );
             } catch (blobErr) {
               console.warn('[VideoDownloader:MainWorld] Blob probe error:', blobErr);
             }
             return;
           }
 
+          const isSameOrigin = url.startsWith(window.location.origin) || url.startsWith('/') || url.includes('web.telegram.org');
+          const credentialsMode = isSameOrigin ? 'include' : 'same-origin';
+
           const probeRes = await window.fetch(url, {
             headers: {
-              Range: 'bytes=0-0',
+              Range: 'bytes=0-128',
             },
-            credentials: 'include',
+            credentials: credentialsMode,
           });
 
           let format = 'MP4';
           const contentType = probeRes.headers.get('content-type') || '';
           if (contentType.includes('matroska')) format = 'MKV';
           else if (contentType.includes('webm')) format = 'WEBM';
+
+          try {
+            const probeHeader = await probeRes.clone().arrayBuffer();
+            if (probeHeader.byteLength >= 4) {
+              const sniffed = detectMediaContainer(new Uint8Array(probeHeader));
+              format = sniffed.format;
+            }
+          } catch {}
 
           let totalBytes = 0;
           const contentRange = probeRes.headers.get('content-range');
@@ -147,20 +180,21 @@ export default defineContentScript({
             if (match && match[1] !== '*') {
               totalBytes = parseInt(match[1], 10);
             }
+          } else {
+            const cl = probeRes.headers.get('content-length');
+            if (cl) totalBytes = parseInt(cl, 10);
           }
 
-          if (totalBytes > 0) {
-            window.postMessage(
-              {
-                source: 'VD_MAIN',
-                type: 'PROBE_RESULT',
-                url,
-                totalBytes,
-                format,
-              },
-              '*'
-            );
-          }
+          window.postMessage(
+            {
+              source: 'VD_MAIN',
+              type: 'PROBE_RESULT',
+              url,
+              totalBytes,
+              format,
+            },
+            '*'
+          );
         } catch (err) {
           console.warn('[VideoDownloader:MainWorld] Probe error:', err);
         }
@@ -224,7 +258,6 @@ export default defineContentScript({
         console.log('[VideoDownloader:MainWorld] Starting image download for:', { url, filename });
         try {
           await executeImageDownload(url, filename || `photo_${Date.now()}.jpg`);
-          window.postMessage({ source: 'VD_MAIN', type: 'SUCCESS', url }, '*');
         } catch (err: any) {
           console.error('[VideoDownloader:MainWorld] Image download error:', err);
           window.postMessage(
@@ -283,14 +316,58 @@ export default defineContentScript({
       if (url.startsWith('blob:')) {
         try {
           const res = await window.fetch(url);
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
           const blob = await res.blob();
           if (controller.cancelled) {
             session.chunks = [];
             sessions.delete(url);
             return;
           }
-          saveBlobToDisk(blob, filename);
-          window.postMessage({ source: 'VD_MAIN', type: 'SUCCESS', url }, '*');
+          if (blob.size === 0) {
+            throw new Error('Blob is empty (0 bytes)');
+          }
+
+          // Sniff container magic bytes from the first 128 bytes
+          let detectedFormat = 'MP4';
+          let detectedMime = 'video/mp4';
+          let ext = 'mp4';
+
+          try {
+            const sliceBuf = await blob.slice(0, 128).arrayBuffer();
+            const sniffed = detectMediaContainer(new Uint8Array(sliceBuf));
+            detectedFormat = sniffed.format;
+            detectedMime = sniffed.mimeType;
+            ext = sniffed.ext;
+          } catch {}
+
+          if (blob.type && blob.type.includes('webm')) {
+            detectedFormat = 'WEBM';
+            detectedMime = 'video/webm';
+            ext = 'webm';
+          } else if (blob.type && blob.type.includes('matroska')) {
+            detectedFormat = 'MKV';
+            detectedMime = 'video/webm';
+            ext = 'mkv';
+          }
+
+          let finalFilename = filename;
+          if (!finalFilename.toLowerCase().endsWith(`.${ext}`)) {
+            finalFilename = finalFilename.replace(/\.[a-zA-Z0-9]+$/, '') + `.${ext}`;
+          }
+
+          const typedBlob = blob.type === detectedMime ? blob : new Blob([blob], { type: detectedMime });
+
+          window.postMessage(
+            {
+              source: 'VD_MAIN',
+              type: 'SUCCESS',
+              url,
+              blob: typedBlob,
+              filename: finalFilename,
+              format: detectedFormat,
+            },
+            '*'
+          );
           sessions.delete(url);
           return;
         } catch (e: any) {
@@ -367,14 +444,26 @@ export default defineContentScript({
             const abortController = new AbortController();
             controller.abortController = abortController;
 
+            // Check if URL is same-origin or Telegram vs third-party CDN (e.g. Snapchat CDN)
+            const isSameOrigin = url.startsWith(window.location.origin) || url.startsWith('/') || url.includes('web.telegram.org');
+            const credentialsMode = isSameOrigin ? 'include' : 'same-origin';
+
             // Open-ended Range allows Service Worker to stream continuously at maximum throughput
             chunkRes = await window.fetch(url, {
               headers: {
                 Range: `bytes=${session.offset}-`,
               },
-              credentials: 'include',
+              credentials: credentialsMode,
               signal: abortController.signal,
             });
+
+            // If server returned HTTP 200 OK while offset was > 0, it means the server ignored the Range header
+            // and sent from byte 0. Reset chunks and offset so we don't corrupt the file with duplicated headers!
+            if (chunkRes.status === 200 && session.offset > 0) {
+              console.warn('[VideoDownloader:MainWorld] Server returned HTTP 200 for Range request. Restarting stream from byte 0 to prevent corruption.');
+              session.chunks = [];
+              session.offset = 0;
+            }
 
             if (chunkRes.status === 206 || chunkRes.status === 200) {
               break;
@@ -551,12 +640,24 @@ export default defineContentScript({
 
       console.log('[VideoDownloader:MainWorld] All stream bytes collected! Total bytes:', session.offset);
 
-      // Determine proper extension: Matroska MUST be .mkv so media players decode Opus audio!
+      // Determine proper format and extension: Sniff magic bytes from collected stream chunks!
       let ext = 'mp4';
-      if (session.contentType.includes('matroska')) {
+      let detectedFormat = 'MP4';
+      let targetMime = session.contentType || 'video/mp4';
+
+      if (session.chunks.length > 0 && session.chunks[0].length >= 4) {
+        const sniffed = detectMediaContainer(session.chunks[0]);
+        detectedFormat = sniffed.format;
+        ext = sniffed.ext;
+        targetMime = sniffed.mimeType;
+      } else if (session.contentType.includes('matroska')) {
         ext = 'mkv';
+        detectedFormat = 'MKV';
+        targetMime = 'video/webm';
       } else if (session.contentType.includes('webm')) {
         ext = 'webm';
+        detectedFormat = 'WEBM';
+        targetMime = 'video/webm';
       }
 
       let finalName = session.filename;
@@ -564,9 +665,18 @@ export default defineContentScript({
         finalName = finalName.replace(/\.[a-zA-Z0-9]+$/, '') + `.${ext}`;
       }
 
-      const finalBlob = new Blob(session.chunks as BlobPart[], { type: session.contentType });
-      saveBlobToDisk(finalBlob, finalName);
-      window.postMessage({ source: 'VD_MAIN', type: 'SUCCESS', url }, '*');
+      const finalBlob = new Blob(session.chunks as BlobPart[], { type: targetMime });
+      window.postMessage(
+        {
+          source: 'VD_MAIN',
+          type: 'SUCCESS',
+          url,
+          blob: finalBlob,
+          filename: finalName,
+          format: detectedFormat,
+        },
+        '*'
+      );
 
       // Clear memory after saving
       session.chunks = [];
@@ -630,23 +740,17 @@ export default defineContentScript({
         finalFilename = finalFilename.replace(/\.[a-zA-Z0-9]+$/, `.${ext}`);
       }
 
-      saveBlobToDisk(blob, finalFilename);
-    }
-
-    function saveBlobToDisk(blob: Blob, filename: string) {
-      const blobUrl = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.style.display = 'none';
-      a.href = blobUrl;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-
-      setTimeout(() => {
-        a.remove();
-        URL.revokeObjectURL(blobUrl);
-      }, 25000);
-      console.log('[VideoDownloader:MainWorld] File saved to disk:', filename, 'Bytes:', blob.size);
+      window.postMessage(
+        {
+          source: 'VD_MAIN',
+          type: 'SUCCESS',
+          url,
+          blob,
+          filename: finalFilename,
+          format: ext.toUpperCase(),
+        },
+        '*'
+      );
     }
   },
 });

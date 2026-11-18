@@ -18,6 +18,7 @@ interface ChatActionBarProps {
   onClear: () => void;
   onCopyText: () => void;
   onCopyImage: () => void;
+  onSaveToVault?: () => void;
   toastMessage: string | null;
 }
 
@@ -29,6 +30,7 @@ export const ChatActionBar: React.FC<ChatActionBarProps> = ({
   onClear,
   onCopyText,
   onCopyImage,
+  onSaveToVault,
   toastMessage,
 }) => {
   const count = selectedMessages.length;
@@ -275,6 +277,25 @@ export const ChatActionBar: React.FC<ChatActionBarProps> = ({
             <Camera size={13} color="#38bdf8" />
             <span>Screenshot</span>
           </button>
+
+          {/* 3. Save to Protected Media Vault */}
+          {onSaveToVault && (
+            <button
+              type="button"
+              className="vd-action-btn vault-action"
+              onClick={onSaveToVault}
+              data-tooltip="Save encrypted to In-App Media Vault"
+              title=""
+              style={{
+                borderColor: 'rgba(167, 139, 250, 0.45)',
+                color: '#c4b5fd',
+                background: 'rgba(167, 139, 250, 0.12)',
+              }}
+            >
+              <ShieldCheck size={13} color="#a78bfa" />
+              <span>Vault</span>
+            </button>
+          )}
 
           {/* Clear / Cancel Selection */}
           <button

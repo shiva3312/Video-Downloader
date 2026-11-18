@@ -9,6 +9,7 @@ import {
   getVideoResolutionLabel,
   probeVideoDetails,
 } from '@/utils/downloader';
+import { detectMediaContainer } from '@/utils/mediaDetector';
 import { downloadStore, DownloadTask } from '@/stores/downloadStore';
 
 interface DownloadOverlayProps {
@@ -100,13 +101,23 @@ export const DownloadOverlay: React.FC<DownloadOverlayProps> = ({ video }) => {
       if (src.startsWith('blob:')) {
         fetch(src)
           .then((res) => res.blob())
-          .then((blob) => {
-            if (blob && blob.size > 0) {
-              setFileSize(formatBytes(blob.size));
-              if (blob.type) {
-                if (blob.type.includes('webm')) setFormat('WEBM');
-                else if (blob.type.includes('matroska')) setFormat('MKV');
-                else if (blob.type.includes('mp4')) setFormat('MP4');
+          .then(async (blob) => {
+            if (blob) {
+              if (blob.size === 0) {
+                setFileSize('0 B');
+              } else {
+                setFileSize(formatBytes(blob.size));
+                try {
+                  const headerBuf = await blob.slice(0, 128).arrayBuffer();
+                  const sniffed = detectMediaContainer(new Uint8Array(headerBuf));
+                  setFormat(sniffed.format);
+                } catch {
+                  if (blob.type) {
+                    if (blob.type.includes('webm')) setFormat('WEBM');
+                    else if (blob.type.includes('matroska')) setFormat('MKV');
+                    else if (blob.type.includes('mp4')) setFormat('MP4');
+                  }
+                }
               }
             }
           })
@@ -176,7 +187,16 @@ export const DownloadOverlay: React.FC<DownloadOverlayProps> = ({ video }) => {
     if (initialTask) setTaskState({ ...initialTask });
 
     try {
-      await downloadVideoWithProgress(src, filename);
+      chrome.runtime
+        .sendMessage({
+          type: 'VAULT_SAVE_IN_PROGRESS',
+          payload: { type: 'video', title: friendlyTitle },
+        })
+        .catch(() => {});
+    } catch {}
+
+    try {
+      await downloadVideoWithProgress(src, filename, undefined, thumb);
     } catch (err: any) {
       if (err?.message !== 'Download cancelled') {
         console.error('[VideoDownloader] Download trigger error:', err);
@@ -190,6 +210,24 @@ export const DownloadOverlay: React.FC<DownloadOverlayProps> = ({ video }) => {
   const displayFileSize = taskState?.totalBytes ? formatBytes(taskState.totalBytes) : fileSize;
   const displayFormat = taskState?.format || format;
   const displaySpeed = taskState?.speed ? ` • ${formatSpeed(taskState.speed)}` : '';
+
+  // Do not show save label or overlay on 0 KB / empty videos
+  const isZeroKb =
+    (displayFileSize &&
+      (displayFileSize === '0 B' ||
+        displayFileSize === '0 KB' ||
+        displayFileSize === '0 Bytes' ||
+        displayFileSize.startsWith('0 B') ||
+        displayFileSize.startsWith('0 KB'))) ||
+    (taskState?.totalBytes === 0 && status !== 'downloading') ||
+    (video.readyState >= 1 &&
+      video.videoWidth === 0 &&
+      video.videoHeight === 0 &&
+      (!video.duration || video.duration === 0));
+
+  if (isZeroKb && status === 'idle') {
+    return null;
+  }
 
   return (
     <div className="vd-overlay-container">
@@ -207,19 +245,19 @@ export const DownloadOverlay: React.FC<DownloadOverlayProps> = ({ video }) => {
         onClick={handleClick}
         title={
           status === 'error'
-            ? taskState?.errorMessage || 'Click to retry download'
+            ? taskState?.errorMessage || 'Click to retry saving'
             : status === 'downloading'
-            ? 'Click to pause download'
+            ? 'Click to pause'
             : status === 'paused'
-            ? 'Click to resume download'
+            ? 'Click to resume saving'
             : status === 'completed'
-            ? 'Video saved! Click to re-download.'
-            : 'Download Video'
+            ? 'Video saved to Vault! View in Side Panel or extension popup.'
+            : 'Save Video to Vault (Hidden from PC)'
         }
       >
         {status === 'idle' && (
           <>
-            {/* Download Icon */}
+            {/* Save / Shield Icon */}
             <svg
               width="13"
               height="13"
@@ -230,11 +268,9 @@ export const DownloadOverlay: React.FC<DownloadOverlayProps> = ({ video }) => {
               strokeLinecap="round"
               strokeLinejoin="round"
             >
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-              <polyline points="7 10 12 15 17 10" />
-              <line x1="12" y1="15" x2="12" y2="3" />
+              <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" />
             </svg>
-            <span className="vd-type-label">Video</span>
+            <span className="vd-type-label">Save Video</span>
             <span className="vd-badge-format">{displayFormat}</span>
             {resolution && <span className="vd-badge-resolution">{resolution}</span>}
             {displayFileSize && <span className="vd-badge-size">{displayFileSize}</span>}
@@ -273,7 +309,7 @@ export const DownloadOverlay: React.FC<DownloadOverlayProps> = ({ video }) => {
                   />
                 </div>
                 <span>
-                  {progressPercent}%{displaySpeed}
+                  Saving: {progressPercent}%{displaySpeed}
                 </span>
               </div>
             ) : taskState?.loadedBytes && taskState.loadedBytes > 0 ? (
@@ -287,7 +323,7 @@ export const DownloadOverlay: React.FC<DownloadOverlayProps> = ({ video }) => {
                 </span>
               </div>
             ) : (
-              <span>Starting...</span>
+              <span>Saving in progress...</span>
             )}
           </>
         )}
@@ -324,7 +360,7 @@ export const DownloadOverlay: React.FC<DownloadOverlayProps> = ({ video }) => {
             >
               <polyline points="20 6 9 17 4 12" />
             </svg>
-            <span>Saved!</span>
+            <span>Saved to Vault!</span>
           </>
         )}
 

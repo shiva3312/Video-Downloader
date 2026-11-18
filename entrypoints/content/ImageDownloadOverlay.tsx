@@ -80,11 +80,34 @@ export const ImageDownloadOverlay: React.FC<ImageDownloadOverlayProps> = ({ imag
 
     // Determine format from URL or probe
     if (src) {
+      // Determine format from URL or probe
       if (src.includes('.png') || src.includes('image/png')) setFormat('PNG');
       else if (src.includes('.webp') || src.includes('image/webp')) setFormat('WEBP');
       else if (src.includes('.gif') || src.includes('image/gif')) setFormat('GIF');
       else if (src.includes('.svg') || src.includes('image/svg')) setFormat('SVG');
       else setFormat('JPG');
+
+      if (src.startsWith('blob:')) {
+        fetch(src)
+          .then((res) => res.blob())
+          .then((blob) => {
+            if (blob) {
+              if (blob.size === 0) {
+                setFileSize('0 B');
+              } else {
+                const mb = blob.size / (1024 * 1024);
+                setFileSize(mb >= 1 ? `${mb.toFixed(1)} MB` : `${Math.round(blob.size / 1024)} KB`);
+                if (blob.type) {
+                  if (blob.type.includes('png')) setFormat('PNG');
+                  else if (blob.type.includes('webp')) setFormat('WEBP');
+                  else if (blob.type.includes('gif')) setFormat('GIF');
+                  else if (blob.type.includes('svg')) setFormat('SVG');
+                }
+              }
+            }
+          })
+          .catch(() => {});
+      }
 
       probeImageDetails(src).then((details) => {
         if (details) {
@@ -136,7 +159,16 @@ export const ImageDownloadOverlay: React.FC<ImageDownloadOverlayProps> = ({ imag
     if (initialTask) setTaskState({ ...initialTask });
 
     try {
-      await downloadImage(src, filename);
+      chrome.runtime
+        .sendMessage({
+          type: 'VAULT_SAVE_IN_PROGRESS',
+          payload: { type: 'image', title: friendlyTitle },
+        })
+        .catch(() => {});
+    } catch {}
+
+    try {
+      await downloadImage(src, filename, thumb);
       downloadStore.setCompleted(src);
     } catch (err: any) {
       if (err?.message !== 'Download cancelled') {
@@ -149,6 +181,21 @@ export const ImageDownloadOverlay: React.FC<ImageDownloadOverlayProps> = ({ imag
   const status = taskState?.status || 'idle';
   const displayFileSize = fileSize;
   const displayFormat = taskState?.format || format;
+
+  // Do not show save label or overlay on 0 KB / empty images
+  const isZeroKb =
+    (displayFileSize &&
+      (displayFileSize === '0 B' ||
+        displayFileSize === '0 KB' ||
+        displayFileSize === '0 Bytes' ||
+        displayFileSize.startsWith('0 B') ||
+        displayFileSize.startsWith('0 KB'))) ||
+    (taskState?.totalBytes === 0 && status !== 'downloading') ||
+    (image.complete && image.naturalWidth === 0 && image.naturalHeight === 0);
+
+  if (isZeroKb && status === 'idle') {
+    return null;
+  }
 
   return (
     <div className="vd-overlay-container">
@@ -164,15 +211,15 @@ export const ImageDownloadOverlay: React.FC<ImageDownloadOverlayProps> = ({ imag
         onClick={handleClick}
         title={
           status === 'error'
-            ? taskState?.errorMessage || 'Click to retry download'
+            ? taskState?.errorMessage || 'Click to retry saving'
             : status === 'completed'
-            ? 'Photo saved! Click to re-download.'
-            : 'Download Image'
+            ? 'Photo saved to Vault! View in Side Panel or extension popup.'
+            : 'Save Photo to Vault (Hidden from PC)'
         }
       >
         {status === 'idle' && (
           <>
-            {/* Photo / Image Icon */}
+            {/* Save / Bookmark Icon */}
             <svg
               width="13"
               height="13"
@@ -183,11 +230,9 @@ export const ImageDownloadOverlay: React.FC<ImageDownloadOverlayProps> = ({ imag
               strokeLinecap="round"
               strokeLinejoin="round"
             >
-              <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
-              <circle cx="8.5" cy="8.5" r="1.5" />
-              <polyline points="21 15 16 10 5 21" />
+              <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" />
             </svg>
-            <span className="vd-type-label">Image</span>
+            <span className="vd-type-label">Save Image</span>
             <span className="vd-badge-format">{displayFormat}</span>
             {resolution && <span className="vd-badge-resolution">{resolution}</span>}
             {displayFileSize && <span className="vd-badge-size">{displayFileSize}</span>}
@@ -217,7 +262,7 @@ export const ImageDownloadOverlay: React.FC<ImageDownloadOverlayProps> = ({ imag
               <line x1="4.93" y1="19.07" x2="7.76" y2="16.24" />
               <line x1="16.24" y1="7.76" x2="19.07" y2="4.93" />
             </svg>
-            <span>Saving...</span>
+            <span>Saving in progress...</span>
           </>
         )}
 
@@ -236,7 +281,7 @@ export const ImageDownloadOverlay: React.FC<ImageDownloadOverlayProps> = ({ imag
             >
               <polyline points="20 6 9 17 4 12" />
             </svg>
-            <span>Saved!</span>
+            <span>Saved to Vault!</span>
           </>
         )}
 

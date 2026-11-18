@@ -1,3 +1,5 @@
+import { sniffBlobMediaInfo, detectMediaContainer } from '@/utils/mediaDetector';
+
 export interface DownloadProgress {
   percent: number;
   loadedBytes: number;
@@ -271,9 +273,9 @@ export function probeVideoDetails(url: string): Promise<VideoMetadata | null> {
       resolved = true;
       window.removeEventListener('message', handler);
       const { totalBytes, format } = event.data;
-      if (totalBytes > 0) {
+      if (typeof totalBytes === 'number') {
         resolve({
-          size: formatBytes(totalBytes),
+          size: totalBytes > 0 ? formatBytes(totalBytes) : '0 B',
           format: format || 'MP4',
           totalBytes,
         });
@@ -312,12 +314,134 @@ export async function probeVideoSize(url: string): Promise<string | null> {
 }
 
 /**
+ * Converts a Blob to a Base64 data: URL string using FileReader
+ */
+export function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = () => reject(reader.error || new Error('FileReader failed'));
+    reader.readAsDataURL(blob);
+  });
+}
+
+/**
+ * Transfers a media Blob to background.ts to be encrypted and saved in the Media Vault.
+ * Supports files of any size by streaming 10MB chunks for large files (> 25MB).
+ */
+export async function sendMediaBlobToVault(
+  blob: Blob,
+  meta: {
+    type: 'video' | 'image';
+    title: string;
+    sourceUrl: string;
+    format: string;
+    sizeBytes: number;
+    thumbnail?: string;
+    mimeType?: string;
+  }
+): Promise<void> {
+  if (!blob || blob.size === 0) {
+    throw new Error('Cannot save 0 KB file to vault');
+  }
+
+  // Sniff magic bytes of the blob to guarantee accurate format and container
+  let format = meta.format || 'MP4';
+  let mimeType = meta.mimeType || blob.type;
+  let ext = format.toLowerCase();
+
+  try {
+    const sniffed = await sniffBlobMediaInfo(blob);
+    format = sniffed.format;
+    mimeType = sniffed.mimeType;
+    ext = sniffed.ext;
+  } catch {
+    if (meta.type === 'video') {
+      mimeType = meta.format === 'MKV' || meta.format === 'WEBM' ? 'video/webm' : 'video/mp4';
+    } else {
+      mimeType = meta.format === 'PNG' ? 'image/png' : 'image/jpeg';
+    }
+  }
+
+  let finalTitle = meta.title;
+  if (!finalTitle.toLowerCase().endsWith(`.${ext}`)) {
+    finalTitle = finalTitle.replace(/\.[a-zA-Z0-9]+$/, '') + `.${ext}`;
+  }
+
+  const typedBlob = blob.type === mimeType ? blob : new Blob([blob], { type: mimeType });
+  const MAX_SINGLE_MSG = 25 * 1024 * 1024; // 25 MB
+
+  if (typedBlob.size <= MAX_SINGLE_MSG) {
+    const dataUrl = await blobToDataUrl(typedBlob);
+    await new Promise<void>((resolve, reject) => {
+      chrome.runtime.sendMessage(
+        {
+          type: 'VAULT_SAVE_ITEM',
+          payload: {
+            ...meta,
+            title: finalTitle,
+            format,
+            dataUrl,
+            mimeType,
+          },
+        },
+        () => {
+          if (chrome.runtime.lastError) {
+            reject(new Error(chrome.runtime.lastError.message));
+          } else {
+            resolve();
+          }
+        }
+      );
+    });
+  } else {
+    // Sliced chunk streaming for files > 25MB
+    const CHUNK_SIZE = 10 * 1024 * 1024;
+    const totalChunks = Math.ceil(typedBlob.size / CHUNK_SIZE);
+    const uploadId = `upload_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+
+    for (let i = 0; i < totalChunks; i++) {
+      const slice = typedBlob.slice(i * CHUNK_SIZE, Math.min(typedBlob.size, (i + 1) * CHUNK_SIZE));
+      const chunkDataUrl = await blobToDataUrl(slice);
+
+      await new Promise<void>((resolve, reject) => {
+        chrome.runtime.sendMessage(
+          {
+            type: 'VAULT_SAVE_CHUNK',
+            payload: {
+              uploadId,
+              chunkIndex: i,
+              totalChunks,
+              chunkDataUrl,
+              meta: {
+                ...meta,
+                title: finalTitle,
+                format,
+                mimeType,
+              },
+            },
+          },
+          () => {
+            if (chrome.runtime.lastError) {
+              reject(new Error(chrome.runtime.lastError.message));
+            } else {
+              resolve();
+            }
+          }
+        );
+      });
+    }
+  }
+}
+
+/**
  * Starts or resumes a download via the Main World bridge
  */
 export function downloadVideoWithProgress(
   url: string,
   filename: string,
-  onProgress?: (progress: DownloadProgress) => void
+  onProgress?: (progress: DownloadProgress) => void,
+  thumbnail?: string
 ): Promise<void> {
   return new Promise((resolve, reject) => {
     const messageHandler = (event: MessageEvent) => {
@@ -346,7 +470,61 @@ export function downloadVideoWithProgress(
         }
       } else if (event.data.type === 'SUCCESS') {
         window.removeEventListener('message', messageHandler);
-        resolve();
+
+        const rawBlob = event.data.blob;
+        const isBlobLike =
+          rawBlob instanceof Blob ||
+          (rawBlob && typeof rawBlob.slice === 'function' && typeof rawBlob.size === 'number');
+
+        if (isBlobLike) {
+          const blob = rawBlob as Blob;
+          if (blob.size === 0) {
+            reject(new Error('Video is 0 KB'));
+            return;
+          }
+
+          (async () => {
+            try {
+              let detectedFormat = event.data.format || 'MP4';
+              let detectedMime =
+                event.data.format === 'MKV' || event.data.format === 'WEBM'
+                  ? 'video/webm'
+                  : 'video/mp4';
+              let detectedExt = detectedFormat.toLowerCase();
+
+              try {
+                const sniffed = await sniffBlobMediaInfo(blob);
+                detectedFormat = sniffed.format;
+                detectedMime = sniffed.mimeType;
+                detectedExt = sniffed.ext;
+              } catch {}
+
+              let title = event.data.filename || filename;
+              if (!title.toLowerCase().endsWith(`.${detectedExt}`)) {
+                title = title.replace(/\.[a-zA-Z0-9]+$/, '') + `.${detectedExt}`;
+              }
+
+              const typedBlob =
+                blob.type === detectedMime ? blob : new Blob([blob], { type: detectedMime });
+
+              await sendMediaBlobToVault(typedBlob, {
+                type: 'video',
+                title,
+                sourceUrl: url,
+                format: detectedFormat,
+                sizeBytes: typedBlob.size,
+                thumbnail,
+                mimeType: detectedMime,
+              });
+              resolve();
+            } catch (err: any) {
+              console.error('[VideoDownloader] Failed to save video to vault:', err);
+              resolve();
+            }
+          })();
+        } else {
+          resolve();
+        }
       } else if (event.data.type === 'ERROR') {
         window.removeEventListener('message', messageHandler);
         reject(new Error(event.data.error || 'Download failed'));
@@ -389,9 +567,9 @@ export function probeImageDetails(url: string): Promise<ImageMetadata | null> {
       resolved = true;
       window.removeEventListener('message', handler);
       const { totalBytes, format } = event.data;
-      if (totalBytes > 0) {
+      if (typeof totalBytes === 'number') {
         resolve({
-          size: formatBytes(totalBytes),
+          size: totalBytes > 0 ? formatBytes(totalBytes) : '0 B',
           format: format || 'JPG',
           totalBytes,
         });
@@ -423,7 +601,11 @@ export function probeImageDetails(url: string): Promise<ImageMetadata | null> {
 /**
  * Downloads an image (blob or web URL) to disk via the Main World bridge
  */
-export function downloadImage(url: string, filename: string): Promise<void> {
+export function downloadImage(
+  url: string,
+  filename: string,
+  thumbnail?: string
+): Promise<void> {
   return new Promise((resolve, reject) => {
     const messageHandler = (event: MessageEvent) => {
       if (
@@ -440,7 +622,35 @@ export function downloadImage(url: string, filename: string): Promise<void> {
 
       if (event.data.type === 'SUCCESS') {
         window.removeEventListener('message', messageHandler);
-        resolve();
+
+        const rawBlob = event.data.blob;
+        const isBlobLike =
+          rawBlob instanceof Blob ||
+          (rawBlob && typeof rawBlob.slice === 'function' && typeof rawBlob.size === 'number');
+
+        if (isBlobLike) {
+          const blob = rawBlob as Blob;
+          if (blob.size === 0) {
+            reject(new Error('Video is 0 KB'));
+            return;
+          }
+          sendMediaBlobToVault(blob, {
+            type: 'image',
+            title: event.data.filename || filename,
+            sourceUrl: url,
+            format: event.data.format || 'JPG',
+            sizeBytes: blob.size,
+            thumbnail: thumbnail,
+            mimeType: event.data.format === 'PNG' ? 'image/png' : 'image/jpeg',
+          })
+            .then(() => resolve())
+            .catch((err) => {
+              console.error('[VideoDownloader] Failed to save image to vault:', err);
+              resolve();
+            });
+        } else {
+          resolve();
+        }
       } else if (event.data.type === 'ERROR') {
         window.removeEventListener('message', messageHandler);
         reject(new Error(event.data.error || 'Image download failed'));

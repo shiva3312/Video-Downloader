@@ -4,6 +4,7 @@ import {
   formatBytes,
   formatSpeed,
   downloadVideoWithProgress,
+  downloadImage,
   cleanDisplayTitle,
 } from '@/utils/downloader';
 
@@ -47,7 +48,18 @@ export const DownloadManagerWidget: React.FC = () => {
 
   const handleDownload = (task: DownloadTask) => {
     downloadStore.addTask(task.url, task.filename, task.resolution, task.format, task.title, task.thumbnail);
-    downloadVideoWithProgress(task.url, task.filename);
+    const isImg = ['JPG', 'JPEG', 'PNG', 'WEBP', 'GIF', 'SVG', 'IMAGE'].includes(task.format.toUpperCase());
+    if (isImg) {
+      downloadImage(task.url, task.filename)
+        .then(() => {
+          downloadStore.setCompleted(task.url);
+        })
+        .catch((err) => {
+          downloadStore.setError(task.url, err.message);
+        });
+    } else {
+      downloadVideoWithProgress(task.url, task.filename);
+    }
   };
 
   const startRename = (task: DownloadTask) => {
@@ -143,22 +155,39 @@ export const DownloadManagerWidget: React.FC = () => {
             {tasks.map((task) => (
               <div key={task.id} className="vd-task-item">
                 <div className="vd-task-top-compact">
-                  {/* 1. Video Thumbnail Preview */}
+                  {/* 1. Media Thumbnail Preview */}
                   <div className="vd-thumb-wrap">
                     {task.thumbnail ? (
                       <img src={task.thumbnail} alt="Preview" className="vd-thumb-img" />
                     ) : (
                       <div className="vd-thumb-placeholder">
-                        <svg
-                          width="14"
-                          height="14"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="1.8"
-                        >
-                          <polygon points="5 3 19 12 5 21 5 3" />
-                        </svg>
+                        {['JPG', 'JPEG', 'PNG', 'WEBP', 'GIF', 'SVG', 'IMAGE'].includes(
+                          task.format.toUpperCase()
+                        ) ? (
+                          <svg
+                            width="14"
+                            height="14"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="1.8"
+                          >
+                            <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+                            <circle cx="8.5" cy="8.5" r="1.5" />
+                            <polyline points="21 15 16 10 5 21" />
+                          </svg>
+                        ) : (
+                          <svg
+                            width="14"
+                            height="14"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="1.8"
+                          >
+                            <polygon points="5 3 19 12 5 21 5 3" />
+                          </svg>
+                        )}
                       </div>
                     )}
                   </div>

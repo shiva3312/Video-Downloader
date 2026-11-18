@@ -24,6 +24,31 @@ export default defineBackground(() => {
       return false;
     }
 
+    if (message.type === 'CAPTURE_TAB_SCREEN') {
+      const winId = sender.tab?.windowId;
+      const options = { format: 'png' as const };
+
+      const callback = (dataUrl?: string) => {
+        const err = chrome.runtime.lastError;
+        if (err || !dataUrl) {
+          console.error('[VideoDownloader:Background] captureVisibleTab error:', err?.message);
+          sendResponse({
+            success: false,
+            error: err?.message || 'Failed to capture screen',
+          });
+        } else {
+          sendResponse({ success: true, dataUrl });
+        }
+      };
+
+      if (typeof winId === 'number' && winId > 0) {
+        chrome.tabs.captureVisibleTab(winId, options, callback);
+      } else {
+        chrome.tabs.captureVisibleTab(options, callback);
+      }
+      return true; // Keep message port open for async response
+    }
+
     return false;
   });
 

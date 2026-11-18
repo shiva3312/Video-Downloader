@@ -95,8 +95,24 @@ export const DownloadOverlay: React.FC<DownloadOverlayProps> = ({ video }) => {
       video.addEventListener('loadedmetadata', updateResolution, { once: true });
     }
 
-    // Probe exact file size & format from Service Worker via 1-byte Range
-    if (src && !src.startsWith('blob:')) {
+    // Probe exact file size & format (direct blob fetch + service worker / main world probe)
+    if (src) {
+      if (src.startsWith('blob:')) {
+        fetch(src)
+          .then((res) => res.blob())
+          .then((blob) => {
+            if (blob && blob.size > 0) {
+              setFileSize(formatBytes(blob.size));
+              if (blob.type) {
+                if (blob.type.includes('webm')) setFormat('WEBM');
+                else if (blob.type.includes('matroska')) setFormat('MKV');
+                else if (blob.type.includes('mp4')) setFormat('MP4');
+              }
+            }
+          })
+          .catch(() => {});
+      }
+
       probeVideoDetails(src).then((details) => {
         if (details) {
           if (details.size) setFileSize(details.size);
@@ -197,16 +213,16 @@ export const DownloadOverlay: React.FC<DownloadOverlayProps> = ({ video }) => {
             : status === 'paused'
             ? 'Click to resume download'
             : status === 'completed'
-            ? 'Download completed. Click to re-download.'
-            : 'Download this video'
+            ? 'Video saved! Click to re-download.'
+            : 'Download Video'
         }
       >
         {status === 'idle' && (
           <>
             {/* Download Icon */}
             <svg
-              width="14"
-              height="14"
+              width="13"
+              height="13"
               viewBox="0 0 24 24"
               fill="none"
               stroke="currentColor"
@@ -218,7 +234,7 @@ export const DownloadOverlay: React.FC<DownloadOverlayProps> = ({ video }) => {
               <polyline points="7 10 12 15 17 10" />
               <line x1="12" y1="15" x2="12" y2="3" />
             </svg>
-            <span>Download</span>
+            <span className="vd-type-label">Video</span>
             <span className="vd-badge-format">{displayFormat}</span>
             {resolution && <span className="vd-badge-resolution">{resolution}</span>}
             {displayFileSize && <span className="vd-badge-size">{displayFileSize}</span>}

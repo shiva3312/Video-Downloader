@@ -4,7 +4,10 @@ import {
   formatSpeed,
   cleanDisplayTitle,
   generateFriendlyVideoName,
+  generateFriendlyImageName,
   generateVideoFilename,
+  generateImageFilename,
+  isImageUrl,
 } from '@/utils/downloader';
 import { DownloadTask } from '@/stores/downloadStore';
 
@@ -12,6 +15,7 @@ interface DetectedVideo {
   id: number;
   index?: number;
   src: string;
+  mediaType?: 'video' | 'image';
   videoWidth: number;
   videoHeight: number;
   duration: number;
@@ -86,26 +90,39 @@ export const App: React.FC = () => {
 
   const handleDownloadTask = (task: DownloadTask) => {
     if (!activeTabId) return;
+    const isImg = ['JPG', 'JPEG', 'PNG', 'WEBP', 'GIF', 'SVG', 'IMAGE'].includes(task.format.toUpperCase());
     chrome.tabs.sendMessage(
       activeTabId,
       {
         type: 'TRIGGER_TAB_DOWNLOAD',
-        payload: { url: task.url, filename: task.filename },
+        payload: {
+          url: task.url,
+          filename: task.filename,
+          title: task.title,
+          mediaType: isImg ? 'image' : 'video',
+        },
       },
       () => fetchData(activeTabId, false)
     );
   };
 
-  const handleDownloadDetected = (video: DetectedVideo) => {
+  const handleDownloadDetected = (item: DetectedVideo) => {
     if (!activeTabId) return;
-    const filename = generateVideoFilename(video.src, 'mp4', video.index || video.id || 1);
-    const title = video.title || generateFriendlyVideoName(video.src, video.index || video.id || 1);
+    const isImage = item.mediaType === 'image' || item.type.includes('Photo') || item.type.includes('Image');
+    const filename = isImage
+      ? generateImageFilename(item.src, 'jpg', item.index || item.id || 1)
+      : generateVideoFilename(item.src, 'mp4', item.index || item.id || 1);
+    const title =
+      item.title ||
+      (isImage
+        ? generateFriendlyImageName(item.src, item.index || item.id || 1)
+        : generateFriendlyVideoName(item.src, item.index || item.id || 1));
 
     chrome.tabs.sendMessage(
       activeTabId,
       {
         type: 'TRIGGER_TAB_DOWNLOAD',
-        payload: { url: video.src, filename, title },
+        payload: { url: item.src, filename, title, mediaType: isImage ? 'image' : 'video' },
       },
       () => {
         setActiveTab('downloads');
@@ -157,6 +174,23 @@ export const App: React.FC = () => {
           <h1 className="popup-title">Video Downloader</h1>
         </div>
         <div className="popup-header-right">
+          <button
+            type="button"
+            className="vd-icon-btn"
+            onClick={() => {
+              if (activeTabId) {
+                chrome.tabs.sendMessage(activeTabId, { type: 'TOGGLE_CHAT_SELECTION' }, () => {
+                  window.close();
+                });
+              }
+            }}
+            title="Select & Copy Chat Messages"
+            style={{ color: '#38bdf8' }}
+          >
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+            </svg>
+          </button>
           {activeDownloadsCount > 0 && <span className="vd-fab-badge">{activeDownloadsCount}</span>}
           {tasks.some((t) => t.status === 'completed' || t.status === 'error') && (
             <button
@@ -188,7 +222,7 @@ export const App: React.FC = () => {
           className={`tab-btn ${activeTab === 'detected' ? 'active' : ''}`}
           onClick={() => setActiveTab('detected')}
         >
-          Page Videos ({detectedVideos.length})
+          Page Media ({detectedVideos.length})
         </button>
       </div>
 
@@ -225,7 +259,7 @@ export const App: React.FC = () => {
                 <line x1="12" y1="15" x2="12" y2="3" />
               </svg>
               <div className="empty-title">No active downloads</div>
-              <div className="empty-desc">Click Download on any video or in the Page Videos tab.</div>
+              <div className="empty-desc">Click Download on any video or photo, or in the Page Media tab.</div>
             </div>
           ) : (
             tasks.map((task) => (
@@ -237,9 +271,19 @@ export const App: React.FC = () => {
                       <img src={task.thumbnail} alt="Preview" className="vd-thumb-img" />
                     ) : (
                       <div className="vd-thumb-placeholder">
-                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-                          <polygon points="5 3 19 12 5 21 5 3" />
-                        </svg>
+                        {['JPG', 'JPEG', 'PNG', 'WEBP', 'GIF', 'SVG', 'IMAGE'].includes(
+                          task.format.toUpperCase()
+                        ) ? (
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+                            <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+                            <circle cx="8.5" cy="8.5" r="1.5" />
+                            <polyline points="21 15 16 10 5 21" />
+                          </svg>
+                        ) : (
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+                            <polygon points="5 3 19 12 5 21 5 3" />
+                          </svg>
+                        )}
                       </div>
                     )}
                   </div>
@@ -409,48 +453,77 @@ export const App: React.FC = () => {
           )
         ) : detectedVideos.length === 0 ? (
           <div className="empty-state">
-            <div className="empty-title">No videos detected on page</div>
-            <div className="empty-desc">Play or scroll to a video on Telegram Web.</div>
+            <div className="empty-title">No media detected on page</div>
+            <div className="empty-desc">Play a video or view a photo on Telegram, Snapchat, or other sites.</div>
           </div>
         ) : (
-          detectedVideos.map((vid) => (
-            <div key={vid.id} className="vd-task-item">
-              <div className="vd-task-top-compact">
-                <div className="vd-thumb-wrap">
-                  <div className="vd-thumb-placeholder">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-                      <polygon points="5 3 19 12 5 21 5 3" />
-                    </svg>
+          detectedVideos.map((vid) => {
+            const isImage =
+              vid.mediaType === 'image' || vid.type.includes('Photo') || vid.type.includes('Image');
+            return (
+              <div key={vid.id} className="vd-task-item">
+                <div className="vd-task-top-compact">
+                  <div className="vd-thumb-wrap">
+                    <div className="vd-thumb-placeholder">
+                      {isImage ? (
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+                          <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+                          <circle cx="8.5" cy="8.5" r="1.5" />
+                          <polyline points="21 15 16 10 5 21" />
+                        </svg>
+                      ) : (
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+                          <polygon points="5 3 19 12 5 21 5 3" />
+                        </svg>
+                      )}
+                    </div>
                   </div>
-                </div>
-                <div className="vd-task-main">
-                  <div className="vd-task-title-row">
-                    <span className="vd-task-name" title={vid.title || vid.src}>
-                      {vid.title || generateFriendlyVideoName(vid.src, vid.index || vid.id || 1)}
-                    </span>
+                  <div className="vd-task-main">
+                    <div className="vd-task-title-row">
+                      <span className="vd-task-name" title={vid.title || vid.src}>
+                        {vid.title ||
+                          (isImage
+                            ? generateFriendlyImageName(vid.src, vid.index || vid.id || 1)
+                            : generateFriendlyVideoName(vid.src, vid.index || vid.id || 1))}
+                      </span>
+                    </div>
+                    <div className="vd-badges-row">
+                      <span className="vd-format-badge">
+                        {isImage
+                          ? vid.src.startsWith('blob:')
+                            ? 'BLOB PHOTO'
+                            : 'JPG/IMG'
+                          : vid.src.includes('progressive')
+                          ? 'MP4/MKV'
+                          : 'MP4'}
+                      </span>
+                      {isImage && vid.videoWidth > 0 && vid.videoHeight > 0 ? (
+                        <span className="vd-res-badge">
+                          {vid.videoWidth}×{vid.videoHeight}
+                        </span>
+                      ) : vid.videoHeight > 0 ? (
+                        <span className="vd-res-badge">{vid.videoHeight}p</span>
+                      ) : null}
+                    </div>
                   </div>
-                  <div className="vd-badges-row">
-                    <span className="vd-format-badge">{vid.src.includes('progressive') ? 'MP4/MKV' : 'MP4'}</span>
-                    {vid.videoHeight > 0 && <span className="vd-res-badge">{vid.videoHeight}p</span>}
+                  <div className="vd-task-actions">
+                    <button
+                      type="button"
+                      className="vd-action-btn download-btn"
+                      onClick={() => handleDownloadDetected(vid)}
+                      title={isImage ? 'Download this photo' : 'Download this video'}
+                    >
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                        <polyline points="7 10 12 15 17 10" />
+                        <line x1="12" y1="15" x2="12" y2="3" />
+                      </svg>
+                    </button>
                   </div>
-                </div>
-                <div className="vd-task-actions">
-                  <button
-                    type="button"
-                    className="vd-action-btn download-btn"
-                    onClick={() => handleDownloadDetected(vid)}
-                    title="Download this video"
-                  >
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
-                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                      <polyline points="7 10 12 15 17 10" />
-                      <line x1="12" y1="15" x2="12" y2="3" />
-                    </svg>
-                  </button>
                 </div>
               </div>
-            </div>
-          ))
+            );
+          })
         )}
       </div>
 

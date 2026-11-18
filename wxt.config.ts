@@ -11,7 +11,8 @@ export default defineConfig({
       'activeTab'
     ],
     host_permissions: [
-      '*://*/*'
+      '*://*/*',
+      '<all_urls>'
     ],
     action: {
       default_title: 'Video Downloader',

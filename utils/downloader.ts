@@ -12,6 +12,12 @@ export interface VideoMetadata {
   totalBytes: number;
 }
 
+export interface ImageMetadata {
+  size: string;
+  format: string;
+  totalBytes: number;
+}
+
 /**
  * Formats byte counts into human-readable strings (e.g., 14.2 MB)
  */
@@ -48,6 +54,31 @@ export function getVideoResolutionLabel(video: HTMLVideoElement): string {
 }
 
 /**
+ * Returns a clean resolution badge string for an image element (e.g. "720×1280", "1080×1920")
+ */
+export function getImageResolutionLabel(img: HTMLImageElement): string {
+  const w = img.naturalWidth || parseInt(img.getAttribute('width') || '0', 10) || img.clientWidth || img.width;
+  const h = img.naturalHeight || parseInt(img.getAttribute('height') || '0', 10) || img.clientHeight || img.height;
+  if (!w || !h) return '';
+  const minDim = Math.min(w, h);
+  if (minDim >= 2160) return '4K';
+  if (minDim >= 1440) return '2K';
+  if (minDim >= 1080) return '1080p';
+  if (minDim >= 720) return '720p';
+  return `${w}×${h}`;
+}
+
+/**
+ * Checks if a URL or filename points to a common image format
+ */
+export function isImageUrl(url: string): boolean {
+  if (!url) return false;
+  if (url.startsWith('data:image/')) return true;
+  const cleanUrl = url.split('?')[0].split('#')[0].toLowerCase();
+  return /\.(jpg|jpeg|png|webp|gif|svg|avif|bmp|ico)$/.test(cleanUrl);
+}
+
+/**
  * Returns clean formatted timestamps for file saving and UI display
  */
 export function getFormattedDateTime(date: Date = new Date()): { fileTimestamp: string; displayTimestamp: string } {
@@ -80,6 +111,24 @@ export function generateFriendlyVideoName(url: string, index: number = 1): strin
 
   const { displayTimestamp } = getFormattedDateTime();
   return `Video ${index} (${displayTimestamp})`;
+}
+
+/**
+ * Generates a clean, friendly name for an image/photo (e.g. "Snapchat Photo (Nov 8, 12:15 AM)")
+ */
+export function generateFriendlyImageName(url: string, index: number = 1): string {
+  if (url.includes('snapchat.com')) {
+    const { displayTimestamp } = getFormattedDateTime();
+    return `Snapchat Photo (${displayTimestamp})`;
+  }
+  const tgDocMatch = url.match(/document(\d+)/i);
+  if (tgDocMatch) {
+    const docId = tgDocMatch[1];
+    return `Telegram Photo ${docId.length > 6 ? docId.slice(-4) : docId}`;
+  }
+
+  const { displayTimestamp } = getFormattedDateTime();
+  return `Photo ${index} (${displayTimestamp})`;
 }
 
 /**
@@ -121,11 +170,54 @@ export function generateVideoFilename(url: string, extension: string = 'mp4', in
 }
 
 /**
+ * Generates a clean filename for saving images/photos to disk.
+ */
+export function generateImageFilename(url: string, extension: string = 'jpg', index: number = 1): string {
+  let ext = extension.replace(/^\./, '').toLowerCase() || 'jpg';
+  if (ext === 'jpeg') ext = 'jpg';
+
+  try {
+    if (url.includes('snapchat.com')) {
+      const { fileTimestamp } = getFormattedDateTime();
+      return `Snapchat_Photo_${fileTimestamp}.${ext}`;
+    }
+
+    const tgDocMatch = url.match(/document(\d+)/i);
+    if (tgDocMatch) {
+      return `telegram_photo_${tgDocMatch[1]}.${ext}`;
+    }
+
+    if (!url.startsWith('blob:') && !url.startsWith('data:')) {
+      const urlObj = new URL(url);
+      const pathname = urlObj.pathname;
+      const filenameFromPath = pathname.substring(pathname.lastIndexOf('/') + 1);
+      if (
+        filenameFromPath &&
+        filenameFromPath.includes('.') &&
+        filenameFromPath.length < 50 &&
+        !filenameFromPath.startsWith('blob')
+      ) {
+        return filenameFromPath.replace(/[^a-zA-Z0-9._-]/g, '_');
+      }
+    }
+
+    const { fileTimestamp } = getFormattedDateTime();
+    return `Photo_${index}_${fileTimestamp}.${ext}`;
+  } catch {
+    const { fileTimestamp } = getFormattedDateTime();
+    return `Photo_${index}_${fileTimestamp}.${ext}`;
+  }
+}
+
+/**
  * Sanitizes any raw title or URL string into a friendly user-facing label.
- * Converts raw "blob:https://..." or "http..." into "Video 1 (Nov 8, 12:15 AM)".
+ * Converts raw "blob:https://..." or "http..." into friendly name.
  */
 export function cleanDisplayTitle(rawTitle: string | undefined, url?: string, fallbackIndex: number = 1): string {
   if (!rawTitle) {
+    if (url && (isImageUrl(url) || url.includes('snapchat.com'))) {
+      return generateFriendlyImageName(url, fallbackIndex);
+    }
     return generateFriendlyVideoName(url || '', fallbackIndex);
   }
 
@@ -136,6 +228,14 @@ export function cleanDisplayTitle(rawTitle: string | undefined, url?: string, fa
     rawTitle.startsWith('https://') ||
     rawTitle.includes('://')
   ) {
+    if (
+      rawTitle.includes('snapchat.com') ||
+      url?.includes('snapchat.com') ||
+      isImageUrl(rawTitle) ||
+      (url && isImageUrl(url))
+    ) {
+      return generateFriendlyImageName(url || rawTitle, fallbackIndex);
+    }
     return generateFriendlyVideoName(url || rawTitle, fallbackIndex);
   }
 
@@ -154,7 +254,7 @@ export function cleanDisplayTitle(rawTitle: string | undefined, url?: string, fa
  * to retrieve the TRUE Content-Range total size and format from Telegram's Service Worker.
  */
 export function probeVideoDetails(url: string): Promise<VideoMetadata | null> {
-  if (!url || url.startsWith('blob:')) return Promise.resolve(null);
+  if (!url) return Promise.resolve(null);
 
   return new Promise((resolve) => {
     let resolved = false;
@@ -265,5 +365,103 @@ export function downloadVideoWithProgress(
       },
       '*'
     );
+  });
+}
+
+/**
+ * Probes the image URL via the Main World bridge to retrieve size and format
+ */
+export function probeImageDetails(url: string): Promise<ImageMetadata | null> {
+  if (!url) return Promise.resolve(null);
+
+  return new Promise((resolve) => {
+    let resolved = false;
+
+    const handler = (event: MessageEvent) => {
+      if (
+        event.data?.source !== 'VD_MAIN' ||
+        event.data?.type !== 'IMAGE_PROBE_RESULT' ||
+        event.data?.url !== url
+      ) {
+        return;
+      }
+
+      resolved = true;
+      window.removeEventListener('message', handler);
+      const { totalBytes, format } = event.data;
+      if (totalBytes > 0) {
+        resolve({
+          size: formatBytes(totalBytes),
+          format: format || 'JPG',
+          totalBytes,
+        });
+      } else {
+        resolve(null);
+      }
+    };
+
+    window.addEventListener('message', handler);
+
+    window.postMessage(
+      {
+        source: 'VD_ISOLATED',
+        type: 'PROBE_IMAGE_DETAILS',
+        url,
+      },
+      '*'
+    );
+
+    setTimeout(() => {
+      if (!resolved) {
+        window.removeEventListener('message', handler);
+        resolve(null);
+      }
+    }, 2000);
+  });
+}
+
+/**
+ * Downloads an image (blob or web URL) to disk via the Main World bridge
+ */
+export function downloadImage(url: string, filename: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const messageHandler = (event: MessageEvent) => {
+      if (
+        event.data?.source === 'VD_ISOLATED' &&
+        event.data?.type === 'CANCEL_DOWNLOAD' &&
+        event.data?.url === url
+      ) {
+        window.removeEventListener('message', messageHandler);
+        reject(new Error('Download cancelled'));
+        return;
+      }
+
+      if (event.data?.source !== 'VD_MAIN' || event.data?.url !== url) return;
+
+      if (event.data.type === 'SUCCESS') {
+        window.removeEventListener('message', messageHandler);
+        resolve();
+      } else if (event.data.type === 'ERROR') {
+        window.removeEventListener('message', messageHandler);
+        reject(new Error(event.data.error || 'Image download failed'));
+      }
+    };
+
+    window.addEventListener('message', messageHandler);
+
+    window.postMessage(
+      {
+        source: 'VD_ISOLATED',
+        type: 'START_IMAGE_DOWNLOAD',
+        url,
+        filename,
+      },
+      '*'
+    );
+
+    setTimeout(() => {
+      window.removeEventListener('message', messageHandler);
+      resolve();
+    }, 15000);
   });
 }

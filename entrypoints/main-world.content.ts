@@ -98,9 +98,36 @@ export default defineContentScript({
         return;
       }
 
-      // Handle Probe Video Details (returns exact Service Worker Content-Range size & format)
+      // Handle Probe Video Details (returns exact Service Worker Content-Range size & format or Blob size)
       if (type === 'PROBE_VIDEO_DETAILS') {
         try {
+          if (url.startsWith('blob:')) {
+            try {
+              const probeRes = await window.fetch(url);
+              const blob = await probeRes.blob();
+              let format = 'MP4';
+              const contentType = blob.type || '';
+              if (contentType.includes('matroska')) format = 'MKV';
+              else if (contentType.includes('webm')) format = 'WEBM';
+
+              if (blob.size > 0) {
+                window.postMessage(
+                  {
+                    source: 'VD_MAIN',
+                    type: 'PROBE_RESULT',
+                    url,
+                    totalBytes: blob.size,
+                    format,
+                  },
+                  '*'
+                );
+              }
+            } catch (blobErr) {
+              console.warn('[VideoDownloader:MainWorld] Blob probe error:', blobErr);
+            }
+            return;
+          }
+
           const probeRes = await window.fetch(url, {
             headers: {
               Range: 'bytes=0-0',
@@ -162,6 +189,55 @@ export default defineContentScript({
             '*'
           );
         }
+      }
+
+      // Handle Probe Image Details
+      if (type === 'PROBE_IMAGE_DETAILS') {
+        try {
+          const probeRes = await window.fetch(url, { credentials: 'include' });
+          const blob = await probeRes.blob();
+          let format = 'JPG';
+          const contentType = blob.type || probeRes.headers.get('content-type') || '';
+          if (contentType.includes('png')) format = 'PNG';
+          else if (contentType.includes('webp')) format = 'WEBP';
+          else if (contentType.includes('gif')) format = 'GIF';
+          else if (contentType.includes('svg')) format = 'SVG';
+
+          window.postMessage(
+            {
+              source: 'VD_MAIN',
+              type: 'IMAGE_PROBE_RESULT',
+              url,
+              totalBytes: blob.size,
+              format,
+            },
+            '*'
+          );
+        } catch {
+          // Best-effort
+        }
+        return;
+      }
+
+      // Handle Start Image Download
+      if (type === 'START_IMAGE_DOWNLOAD') {
+        console.log('[VideoDownloader:MainWorld] Starting image download for:', { url, filename });
+        try {
+          await executeImageDownload(url, filename || `photo_${Date.now()}.jpg`);
+          window.postMessage({ source: 'VD_MAIN', type: 'SUCCESS', url }, '*');
+        } catch (err: any) {
+          console.error('[VideoDownloader:MainWorld] Image download error:', err);
+          window.postMessage(
+            {
+              source: 'VD_MAIN',
+              type: 'ERROR',
+              url,
+              error: err?.message || 'Image download failed',
+            },
+            '*'
+          );
+        }
+        return;
       }
     });
 
@@ -495,6 +571,66 @@ export default defineContentScript({
       // Clear memory after saving
       session.chunks = [];
       sessions.delete(url);
+    }
+
+    async function executeImageDownload(url: string, suggestedFilename: string) {
+      let blob: Blob | null = null;
+      let contentType = 'image/jpeg';
+
+      if (url.startsWith('blob:') || url.startsWith('data:')) {
+        const res = await window.fetch(url);
+        blob = await res.blob();
+        if (blob.type) contentType = blob.type;
+      } else {
+        try {
+          const res = await window.fetch(url, { credentials: 'include' });
+          blob = await res.blob();
+          if (blob.type) contentType = blob.type;
+        } catch (fetchErr) {
+          console.warn('[VideoDownloader:MainWorld] Image fetch error, falling back to canvas:', fetchErr);
+          const allImages = Array.from(document.querySelectorAll<HTMLImageElement>('img'));
+          const imgEl = allImages.find((img) => img.src === url || img.currentSrc === url);
+          if (imgEl && (imgEl.naturalWidth > 0 || imgEl.width > 0)) {
+            blob = await new Promise<Blob | null>((resolve) => {
+              try {
+                const canvas = document.createElement('canvas');
+                canvas.width = imgEl.naturalWidth || imgEl.width;
+                canvas.height = imgEl.naturalHeight || imgEl.height;
+                const ctx = canvas.getContext('2d');
+                if (ctx) {
+                  ctx.drawImage(imgEl, 0, 0);
+                  canvas.toBlob((b) => resolve(b), 'image/jpeg', 0.95);
+                  return;
+                }
+              } catch (e) {
+                console.warn('[VideoDownloader:MainWorld] Canvas capture failed:', e);
+              }
+              resolve(null);
+            });
+          }
+          if (!blob) throw fetchErr;
+        }
+      }
+
+      if (!blob || blob.size === 0) {
+        throw new Error('Image data was empty');
+      }
+
+      let ext = 'jpg';
+      if (contentType.includes('png')) ext = 'png';
+      else if (contentType.includes('webp')) ext = 'webp';
+      else if (contentType.includes('gif')) ext = 'gif';
+      else if (contentType.includes('svg')) ext = 'svg';
+      else if (contentType.includes('jpeg') || contentType.includes('jpg')) ext = 'jpg';
+
+      let finalFilename = suggestedFilename;
+      if (!/\.[a-zA-Z0-9]+$/.test(finalFilename)) {
+        finalFilename = `${finalFilename}.${ext}`;
+      } else {
+        finalFilename = finalFilename.replace(/\.[a-zA-Z0-9]+$/, `.${ext}`);
+      }
+
+      saveBlobToDisk(blob, finalFilename);
     }
 
     function saveBlobToDisk(blob: Blob, filename: string) {

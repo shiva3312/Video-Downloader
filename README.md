@@ -39,7 +39,7 @@ A modern, high-performance Manifest V3 browser extension built with **WXT**, **R
 ```
 VideoDownloader/
 ├── entrypoints/
-│   ├── background.ts          # Background service worker (badge counts, fallback downloads)
+│   ├── background.ts          # Background service worker (badge counts and tab lifecycle)
 │   ├── content/               # Content script with Shadow DOM React injection
 │   │   ├── DownloadOverlay.tsx # Floating React overlay with progress bar
 │   │   ├── index.tsx          # MutationObserver detecting dynamic SPA videos

@@ -19,11 +19,8 @@ Video Downloader (Web & Telegram) ("we", "our", or "the extension") values your 
 ---
 
 ## 3. Permissions Justification
-- **`downloads`**: Used strictly to save completed video files to your local device upon your explicit request.
-- **`activeTab`**: Used strictly to inspect the active browser tab for `<video>` elements when the extension popup is opened.
-- **`storage`**: Used strictly to save local UI preferences (such as minimized/expanded dock state) and active download task states across tab switches.
-- **`scripting`**: Used strictly to render the isolated Shadow DOM download overlay button directly over video elements on web pages.
-- **Host Permissions (`*://*/*`, `*://web.telegram.org/*`)**: Required to stream video data chunks directly from media hosts and communicate with Telegram Web's Service Worker to stream progressive video documents.
+- **`activeTab`**: Used strictly to inspect the active browser tab for `<video>` elements and communicate with the page overlay when the extension popup is opened by the user.
+- **Host Permissions (`*://*/*`)**: Required to detect video elements, stream video data chunks directly from media hosts, and communicate with in-page Service Workers (such as on Telegram Web) to stream progressive video documents.
 
 ---
 

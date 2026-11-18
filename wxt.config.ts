@@ -6,15 +6,11 @@ export default defineConfig({
   manifest: {
     name: 'Video Downloader (Web & Telegram)',
     description: 'Detects and downloads progressive videos, streams, and blobs from Telegram Web and other websites with one click.',
-    version: '1.0.0',
+    version: '1.0.1',
     permissions: [
-      'downloads',
-      'activeTab',
-      'storage',
-      'scripting'
+      'activeTab'
     ],
     host_permissions: [
-      '*://web.telegram.org/*',
       '*://*/*'
     ],
     action: {

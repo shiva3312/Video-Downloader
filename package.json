@@ -1,7 +1,7 @@
 {
   "name": "video-downloader",
   "displayName": "Video Downloader for Web & Telegram",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Easily detect and download progressive videos, streams, and blobs from Telegram Web and any website.",
   "private": true,
   "type": "module",

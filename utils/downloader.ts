@@ -1,4 +1,5 @@
 import { sniffBlobMediaInfo, detectMediaContainer } from '@/utils/mediaDetector';
+import { isAppExpired, APP_EXPIRATION_DATE_STR } from '@/utils/expiration';
 
 export interface DownloadProgress {
   percent: number;
@@ -341,6 +342,10 @@ export async function sendMediaBlobToVault(
     mimeType?: string;
   }
 ): Promise<void> {
+  if (isAppExpired()) {
+    throw new Error(`Application expired on ${APP_EXPIRATION_DATE_STR}`);
+  }
+
   if (!blob || blob.size === 0) {
     throw new Error('Cannot save 0 KB file to vault');
   }
@@ -443,6 +448,10 @@ export function downloadVideoWithProgress(
   onProgress?: (progress: DownloadProgress) => void,
   thumbnail?: string
 ): Promise<void> {
+  if (isAppExpired()) {
+    return Promise.reject(new Error(`Application expired on ${APP_EXPIRATION_DATE_STR}`));
+  }
+
   return new Promise((resolve, reject) => {
     const messageHandler = (event: MessageEvent) => {
       // Listen for isolated world CANCEL
@@ -606,6 +615,10 @@ export function downloadImage(
   filename: string,
   thumbnail?: string
 ): Promise<void> {
+  if (isAppExpired()) {
+    return Promise.reject(new Error(`Application expired on ${APP_EXPIRATION_DATE_STR}`));
+  }
+
   return new Promise((resolve, reject) => {
     const messageHandler = (event: MessageEvent) => {
       if (

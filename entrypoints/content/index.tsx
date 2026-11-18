@@ -17,6 +17,7 @@ import {
   isImageUrl,
 } from '@/utils/downloader';
 import { isSupportedDomain } from '@/utils/mediaDetector';
+import { isAppExpired, APP_EXPIRATION_DATE_STR } from '@/utils/expiration';
 import overlayCss from './overlay.css?inline';
 import widgetCss from './widget.css?inline';
 
@@ -31,7 +32,13 @@ export default defineContentScript({
   cssInjectionMode: 'manual',
   runAt: 'document_idle',
   main(ctx) {
-    // Strictly restrict extension UI, download buttons, chat selector, and observers to Telegram & Snapchat only
+    // 1. Hard cutoff: cease all operations after December 5, 2026
+    if (isAppExpired()) {
+      console.warn('[VideoDownloader] Application has expired on', APP_EXPIRATION_DATE_STR);
+      return;
+    }
+
+    // 2. Strictly restrict extension UI, download buttons, chat selector, and observers to Telegram & Snapchat only
     if (!isSupportedDomain(window.location.href)) {
       return;
     }

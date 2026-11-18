@@ -14,6 +14,7 @@ import {
   renderMessagesAsBlob,
 } from './chatFormatter';
 import { isSupportedDomain } from '@/utils/mediaDetector';
+import { isAppExpired } from '@/utils/expiration';
 import chatCss from './chatStyles.css?inline';
 
 const INJECTED_STYLE_ID = 'vd-chat-selection-styles';
@@ -126,7 +127,7 @@ export class ChatSelectionManager {
   private projectionObserver: MutationObserver | null = null;
 
   constructor() {
-    if (!isSupportedDomain()) return;
+    if (isAppExpired() || !isSupportedDomain()) return;
     this.injectGlobalStyles();
     this.mountShadowUI();
     this.attachEventListeners();
@@ -134,7 +135,7 @@ export class ChatSelectionManager {
   }
 
   private injectGlobalStyles() {
-    if (!isSupportedDomain()) return;
+    if (isAppExpired() || !isSupportedDomain()) return;
     if (document.getElementById(INJECTED_STYLE_ID)) return;
     const style = document.createElement('style');
     style.id = INJECTED_STYLE_ID;
@@ -143,7 +144,7 @@ export class ChatSelectionManager {
   }
 
   public ensureMounted() {
-    if (!isSupportedDomain()) return;
+    if (isAppExpired() || !isSupportedDomain()) return;
     this.injectGlobalStyles();
     this.checkChatProjectionChange();
     const existing = document.getElementById('vd-chat-selection-host');
@@ -280,7 +281,7 @@ export class ChatSelectionManager {
   }
 
   public toggleSelectionMode(forceState?: boolean) {
-    if (!isSupportedDomain()) return;
+    if (isAppExpired() || !isSupportedDomain()) return;
     this.isSelecting = forceState !== undefined ? forceState : !this.isSelecting;
     document.body.setAttribute('data-vd-chat-active', this.isSelecting ? 'true' : 'false');
 

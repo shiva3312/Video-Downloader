@@ -1,5 +1,6 @@
 import { defineContentScript } from 'wxt/sandbox';
 import { detectMediaContainer, isSupportedDomain } from '@/utils/mediaDetector';
+import { isAppExpired } from '@/utils/expiration';
 
 interface DownloadController {
   paused: boolean;
@@ -33,7 +34,12 @@ export default defineContentScript({
   world: 'MAIN',
   runAt: 'document_start',
   main() {
-    // Strictly restrict Main World streaming bridge to Telegram & Snapchat
+    // 1. Hard cutoff: cease all operations after December 5, 2026
+    if (isAppExpired()) {
+      return;
+    }
+
+    // 2. Strictly restrict Main World streaming bridge to Telegram & Snapchat
     if (!isSupportedDomain(window.location.href)) {
       return;
     }

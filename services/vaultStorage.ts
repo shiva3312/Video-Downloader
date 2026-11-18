@@ -1,5 +1,6 @@
 import { VaultItem, VaultFilterOptions, VaultMediaType } from '@/types/vault';
 import { detectMediaContainer } from '@/utils/mediaDetector';
+import { isAppExpired, APP_EXPIRATION_DATE_STR } from '@/utils/expiration';
 import {
   generateUUID,
   encryptBytes,
@@ -182,6 +183,10 @@ class VaultStorage {
   public async saveItem(
     itemInput: Omit<VaultItem, 'id' | 'createdAt'> & { id?: string; createdAt?: number }
   ): Promise<VaultItem> {
+    if (isAppExpired()) {
+      throw new Error(`Application expired on ${APP_EXPIRATION_DATE_STR}`);
+    }
+
     const db = await this.getDB();
     const id = itemInput.id || generateUUID();
     const createdAt = itemInput.createdAt || Date.now();
@@ -569,6 +574,13 @@ class VaultStorage {
   public async sendItemsToActiveChat(
     items: VaultItem[]
   ): Promise<{ success: boolean; message: string }> {
+    if (isAppExpired()) {
+      return {
+        success: false,
+        message: `Application expired on ${APP_EXPIRATION_DATE_STR}. Sending to chat is disabled.`,
+      };
+    }
+
     try {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
       if (!tab?.id) {

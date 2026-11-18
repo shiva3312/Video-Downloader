@@ -9,7 +9,8 @@ import { SidePanelRegister } from './components/SidePanelRegister';
 import { SidePanelProLocked } from './components/SidePanelProLocked';
 import { ProKeyModal } from '@/entrypoints/popup/components/ProKeyModal';
 import { MediaPreviewModal } from '@/entrypoints/components/MediaPreviewModal';
-import { Film, Image as ImageIcon, MessageSquare, FileText, Loader2 } from 'lucide-react';
+import { Film, Image as ImageIcon, MessageSquare, FileText, Loader2, ShieldAlert } from 'lucide-react';
+import { isAppExpired, APP_EXPIRATION_DATE_STR } from '@/utils/expiration';
 import './style.css';
 
 export const App: React.FC = () => {
@@ -174,6 +175,27 @@ export const App: React.FC = () => {
     <div className="sp-container">
       {/* Toast Notification */}
       {toast && <div className="sp-toast">{toast}</div>}
+
+      {/* Expiration Notice Banner if expired */}
+      {isAppExpired() && (
+        <div
+          style={{
+            background: 'rgba(239, 68, 68, 0.12)',
+            borderBottom: '1px solid rgba(239, 68, 68, 0.28)',
+            padding: '8px 12px',
+            fontSize: '11px',
+            color: '#fca5a5',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+          }}
+        >
+          <ShieldAlert size={15} style={{ flexShrink: 0, color: '#ef4444' }} />
+          <span>
+            Application expired on <strong>{APP_EXPIRATION_DATE_STR}</strong>. New downloads and captures are disabled. Existing items can be previewed or exported to PC.
+          </span>
+        </div>
+      )}
 
       {/* Header with Search and User Info */}
       <SidePanelHeader

@@ -2,6 +2,7 @@ import { authService } from '@/services/authService';
 import { vaultStorage } from '@/services/vaultStorage';
 import { licenseService } from '@/services/licenseService';
 import { sniffBlobMediaInfo, isSupportedDomain } from '@/utils/mediaDetector';
+import { isAppExpired } from '@/utils/expiration';
 
 interface PendingChunkUpload {
   uploadId: string;
@@ -24,8 +25,8 @@ export default defineBackground(() => {
       if (tabId) {
         const actionApi = chrome.action || (chrome as any).browserAction;
         if (actionApi) {
-          // Strictly suppress badge on non-Telegram/non-Snapchat tabs
-          if (!isSupportedDomain(senderUrl)) {
+          // Strictly suppress badge if app is expired or on non-Telegram/non-Snapchat tabs
+          if (isAppExpired() || !isSupportedDomain(senderUrl)) {
             actionApi.setBadgeText({ tabId, text: '' });
           } else {
             actionApi.setBadgeText({
@@ -44,6 +45,10 @@ export default defineBackground(() => {
     }
 
     if (message.type === 'CAPTURE_TAB_SCREEN') {
+      if (isAppExpired()) {
+        sendResponse({ success: false, error: 'APPLICATION_EXPIRED' });
+        return false;
+      }
       const winId = sender.tab?.windowId;
       const options = { format: 'png' as const };
 
@@ -121,6 +126,10 @@ export default defineBackground(() => {
     }
 
     if (message.type === 'VAULT_SAVE_ITEM') {
+      if (isAppExpired()) {
+        sendResponse({ success: false, error: 'APPLICATION_EXPIRED' });
+        return false;
+      }
       (async () => {
         try {
           const session = await authService.getActiveSession();
@@ -216,6 +225,10 @@ export default defineBackground(() => {
     }
 
     if (message.type === 'VAULT_SAVE_CHUNK') {
+      if (isAppExpired()) {
+        sendResponse({ success: false, error: 'APPLICATION_EXPIRED' });
+        return false;
+      }
       (async () => {
         try {
           const { uploadId, chunkIndex, totalChunks, chunkDataUrl, meta } = message.payload;

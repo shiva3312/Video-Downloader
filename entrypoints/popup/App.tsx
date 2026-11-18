@@ -19,6 +19,8 @@ import { AuthView } from './components/AuthView';
 import { ProKeyModal } from './components/ProKeyModal';
 import { RecentVaultList } from './components/RecentVaultList';
 import { MediaPreviewModal } from '@/entrypoints/components/MediaPreviewModal';
+import { AppExpiredView } from '@/entrypoints/components/AppExpiredView';
+import { isAppExpired } from '@/utils/expiration';
 import {
   ShieldCheck,
   Sparkles,
@@ -383,6 +385,15 @@ export const App: React.FC = () => {
       <div className="popup-container" style={{ padding: 24, textAlign: 'center' }}>
         <span className="v-loading-spinner" />
         <div style={{ marginTop: 12, color: '#94a3b8', fontSize: 12 }}>Checking Vault Session...</div>
+      </div>
+    );
+  }
+
+  // If application has expired after December 5, 2026 -> Display Expired View
+  if (isAppExpired()) {
+    return (
+      <div className="popup-container">
+        <AppExpiredView onOpenSidePanel={openSidePanel} />
       </div>
     );
   }

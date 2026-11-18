@@ -8,14 +8,17 @@ export default defineBackground(() => {
       const count = message.payload?.count || 0;
 
       if (tabId) {
-        chrome.action.setBadgeText({
-          tabId,
-          text: count > 0 ? String(count) : '',
-        });
-        chrome.action.setBadgeBackgroundColor({
-          tabId,
-          color: '#0088cc', // Modern Telegram/cyan blue badge
-        });
+        const actionApi = chrome.action || (chrome as any).browserAction;
+        if (actionApi) {
+          actionApi.setBadgeText({
+            tabId,
+            text: count > 0 ? String(count) : '',
+          });
+          actionApi.setBadgeBackgroundColor({
+            tabId,
+            color: '#0088cc', // Modern Telegram/cyan blue badge
+          });
+        }
       }
       sendResponse({ success: true });
       return false;
@@ -27,7 +30,10 @@ export default defineBackground(() => {
   // Clean up badge when tab is updated or refreshed
   chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
     if (changeInfo.status === 'loading') {
-      chrome.action.setBadgeText({ tabId, text: '' });
+      const actionApi = chrome.action || (chrome as any).browserAction;
+      if (actionApi) {
+        actionApi.setBadgeText({ tabId, text: '' });
+      }
     }
   });
 });

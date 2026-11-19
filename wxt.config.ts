@@ -9,7 +9,8 @@ export default defineConfig({
     version: '1.0.1',
     permissions: [
       'activeTab',
-      'sidePanel'
+      'sidePanel',
+      'unlimitedStorage'
     ],
     host_permissions: [
       '*://*/*',

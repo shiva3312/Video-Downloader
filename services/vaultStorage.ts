@@ -143,6 +143,14 @@ class VaultStorage {
               db.close();
               this.dbPromise = null;
             };
+
+            // Request persistent storage protection against browser eviction
+            try {
+              if (typeof navigator !== 'undefined' && navigator.storage?.persist) {
+                navigator.storage.persist().catch(() => {});
+              }
+            } catch {}
+
             resolve(db);
           };
 
